@@ -14,6 +14,14 @@ const HANDLE_CLASS =
 const SELECTED_CLASS =
   'ring-2 ring-[var(--accent)] ring-offset-2 ring-offset-[var(--bg-app)]';
 
+const SEVERITY_BADGES: Record<Severity, string> = {
+  critical: 'bg-[var(--sev-critical-chip-bg)] text-[var(--sev-critical-fg)]',
+  high: 'bg-[var(--sev-high-chip-bg)] text-[var(--sev-high-fg)]',
+  medium: 'bg-[var(--sev-medium-chip-bg)] text-[var(--sev-medium-fg)]',
+  low: 'bg-[var(--sev-low-chip-bg)] text-[var(--sev-low-fg)]',
+  info: 'bg-[var(--sev-info-chip-bg)] text-[var(--sev-info-fg)]',
+};
+
 const SEVERITY_BORDERS: Record<Severity | 'none', string> = {
   critical: 'border-[var(--sev-critical-border)]',
   high: 'border-[var(--sev-high-border)]',
@@ -61,8 +69,18 @@ export function ServiceNode({
         className={HANDLE_CLASS}
       />
 
-      <div className="text-[13px] leading-tight font-semibold text-[var(--text-primary)] truncate">
-        {service.name}
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[13px] leading-tight font-semibold text-[var(--text-primary)] truncate">
+          {service.name}
+        </div>
+        {data.worstSeverity !== 'none' && data.worstSeverity !== 'info' && (
+          <span
+            className={`shrink-0 px-1.5 rounded text-[10px] leading-4 font-medium ${SEVERITY_BADGES[data.worstSeverity]}`}
+            title={`${data.findingsCount} finding(s), worst: ${data.worstSeverity}`}
+          >
+            {data.findings.filter((f) => f.severity !== 'info').length}
+          </span>
+        )}
       </div>
 
       <div
@@ -98,8 +116,22 @@ export function HostPortNode({
         selected ? SELECTED_CLASS : ''
       }`}
     >
-      <div className="text-xs leading-tight text-[var(--node-port-fg)]">
-        port
+      <div className="flex items-center justify-between text-xs leading-tight">
+        <span className="text-[var(--node-port-fg)]">port</span>
+        <span
+          className={
+            data.isPublicInternet
+              ? 'text-[var(--sev-high-fg)] font-medium'
+              : 'text-[var(--text-secondary)]'
+          }
+          title={
+            data.isPublicInternet
+              ? 'Listens on all host interfaces'
+              : 'Only reachable from the host itself'
+          }
+        >
+          {data.isPublicInternet ? 'public' : 'loopback'}
+        </span>
       </div>
       <div
         className="text-xs leading-tight font-mono text-[var(--text-primary)] whitespace-nowrap"
@@ -140,8 +172,13 @@ export function NetworkNode({
         position={targetPosition ?? Position.Left}
         className={HANDLE_CLASS}
       />
-      <div className="text-xs leading-tight text-[var(--node-network-fg)]">
-        network
+      <div className="flex items-center justify-between text-xs leading-tight">
+        <span className="text-[var(--node-network-fg)]">network</span>
+        {(network.internal || network.external) && (
+          <span className="text-[var(--text-secondary)]">
+            {network.internal ? 'internal' : 'external'}
+          </span>
+        )}
       </div>
       <div
         className="text-[13px] leading-tight font-medium text-[var(--text-primary)] truncate"

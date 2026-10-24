@@ -189,6 +189,13 @@ function getEdgeColor(edge: DiagramEdge, colors: SvgThemeColors): {
         dashed: false,
         markerId: 'arrow-network',
       };
+    case 'networkMode':
+      return {
+        stroke: colors.nodeNetworkBorder,
+        strokeWidth: 1.5,
+        dashed: true,
+        markerId: 'arrow-network',
+      };
     case 'volume': {
       const isBind = edge.target.startsWith('bind:');
       return {
@@ -246,12 +253,11 @@ export async function renderGraphToSvgString(
   // Embedded Defs: Styles, Web Fonts, Markers, Filters, Patterns
   parts.push(`  <defs>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap');
       text {
-        font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-family: 'Geist Variable', 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       }
       .mono {
-        font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-family: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
       }
     </style>
 
@@ -381,14 +387,18 @@ export async function renderGraphToSvgString(
       let fg = colors.nodeNetworkFg;
 
       if (data.kind === 'hostPort') {
-        typeLabel = 'PORT';
+        typeLabel = data.isPublicInternet ? 'PUBLIC PORT' : 'LOOPBACK PORT';
         title = data.exposureLabel;
         isMono = true;
         bg = colors.nodePortBg;
         border = colors.nodePortBorder;
         fg = colors.nodePortFg;
       } else if (data.kind === 'network') {
-        typeLabel = 'NETWORK';
+        typeLabel = data.network.internal
+          ? 'NETWORK · INTERNAL'
+          : data.network.external
+            ? 'NETWORK · EXTERNAL'
+            : 'NETWORK';
         title = data.network.name;
         bg = colors.nodeNetworkBg;
         border = colors.nodeNetworkBorder;

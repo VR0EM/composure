@@ -237,7 +237,7 @@ function DiagramCanvas({
             <div className="space-y-1">
               <div className="text-[var(--text-muted)]">Node types</div>
               <div className="flex items-center justify-between gap-3">
-                <span>Published port</span>
+                <span>Published port (public / loopback)</span>
                 <span className="w-5 h-2.5 rounded-sm bg-[var(--node-port-bg)] border border-[var(--node-port-border)] inline-block" />
               </div>
               <div className="flex items-center justify-between gap-3">
@@ -266,6 +266,10 @@ function DiagramCanvas({
               <div className="flex items-center justify-between gap-3">
                 <span>depends_on</span>
                 <span className="w-6 border-t border-dashed border-[var(--edge-depends)] inline-block" />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>network_mode: service</span>
+                <span className="w-6 border-t border-dashed border-[var(--node-network-border)] inline-block" />
               </div>
             </div>
           </div>

@@ -1,20 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ALL_RULES,
-  ComposeModel,
+  AnalysisResult,
+  ComposeDiagnostic,
   ComposeParseError,
   DiagramNodeData,
   Finding,
+  addSuppressionComment,
+  analyzeCompose,
   applyFindingFix,
   buildComposeGraph,
   compressYamlToHash,
   decompressYamlFromHash,
   generateFindingsMarkdown,
-  parseCompose,
-  runRules,
 } from '../core';
 import { ComposeEditor, EditorHandle } from './Editor';
 import { FindingsPanel } from './FindingsPanel';
+import { FixPreviewDialog } from './FixPreviewDialog';
+import { ProblemsPanel } from './ProblemsPanel';
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -35,35 +38,106 @@ import {
   exportDiagramAsSvg,
 } from './exportDiagram';
 
-const initialParseResult = parseCompose(DEFAULT_COMPOSE_YAML);
-const initialModel: ComposeModel | null = initialParseResult.ok
-  ? initialParseResult.model
-  : null;
-
 type MobileTab = 'editor' | 'diagram' | 'findings';
-type RightPanelTab = 'findings' | 'details';
+type RightPanelTab = 'findings' | 'problems' | 'details';
+type OkAnalysis = Extract<AnalysisResult, { ok: true }>;
+
+// Stable empty lists, so the editor does not re-render markers on every render
+const EMPTY_FINDINGS: Finding[] = [];
+const EMPTY_DIAGNOSTICS: ComposeDiagnostic[] = [];
+
+const STORAGE_KEYS = {
+  theme: 'composure-theme',
+  draft: 'composure-draft',
+  disabledRules: 'composure-disabled-rules',
+} as const;
+
+interface StoredDraft {
+  yaml: string;
+  fileName: string;
+  exampleId: string;
+}
+
+function readStorage(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Storage can be unavailable (private mode, blocked site data)
+  }
+}
 
 function getInitialTheme(): 'dark' | 'light' {
   if (typeof window === 'undefined') return 'dark';
-  const saved = window.localStorage.getItem('composure-theme');
+  const saved = readStorage(STORAGE_KEYS.theme);
   if (saved === 'light' || saved === 'dark') return saved;
-  return 'dark';
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function getInitialDraft(): StoredDraft {
+  const fallback = {
+    yaml: DEFAULT_COMPOSE_YAML,
+    fileName: 'docker-compose.yml',
+    exampleId: 'production-stack',
+  };
+  // A shared link wins over the saved draft; it is loaded asynchronously below
+  if (typeof window === 'undefined' || window.location.hash.includes('compose=')) return fallback;
+  try {
+    const parsed = JSON.parse(readStorage(STORAGE_KEYS.draft) ?? 'null') as Partial<StoredDraft> | null;
+    if (parsed && typeof parsed.yaml === 'string' && parsed.yaml.trim().length > 0) {
+      return {
+        yaml: parsed.yaml,
+        fileName: typeof parsed.fileName === 'string' ? parsed.fileName : fallback.fileName,
+        exampleId: typeof parsed.exampleId === 'string' ? parsed.exampleId : 'custom',
+      };
+    }
+  } catch {
+    // Corrupt draft: ignore
+  }
+  return fallback;
+}
+
+function getInitialDisabledRules(): Set<string> {
+  try {
+    const parsed = JSON.parse(readStorage(STORAGE_KEYS.disabledRules) ?? '[]') as unknown;
+    if (Array.isArray(parsed)) {
+      const known = new Set(ALL_RULES.map((r) => r.id));
+      return new Set(parsed.filter((id): id is string => typeof id === 'string' && known.has(id)));
+    }
+  } catch {
+    // ignore
+  }
+  return new Set();
 }
 
 export function App() {
-  const [yamlText, setYamlText] = useState<string>(DEFAULT_COMPOSE_YAML);
-  const [activeExampleId, setActiveExampleId] =
-    useState<string>('production-stack');
-  const [fileName, setFileName] = useState<string>('docker-compose.yml');
-  const [lastValidModel, setLastValidModel] = useState<ComposeModel | null>(
-    initialModel,
+  const [initialDraft] = useState(getInitialDraft);
+  const [yamlText, setYamlText] = useState<string>(initialDraft.yaml);
+  const [activeExampleId, setActiveExampleId] = useState<string>(initialDraft.exampleId);
+  const [fileName, setFileName] = useState<string>(initialDraft.fileName);
+  const [disabledRuleIds, setDisabledRuleIds] = useState<Set<string>>(getInitialDisabledRules);
+  const [initialAnalysis] = useState(() =>
+    analyzeCompose(initialDraft.yaml, { disabledRuleIds }),
+  );
+  const [analysis, setAnalysis] = useState<OkAnalysis | null>(
+    initialAnalysis.ok ? initialAnalysis : null,
   );
   const [parseErrors, setParseErrors] = useState<ComposeParseError[]>(
-    initialParseResult.ok ? [] : initialParseResult.errors,
+    initialAnalysis.ok ? [] : initialAnalysis.errors,
   );
-  const [disabledRuleIds, setDisabledRuleIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [fixPreview, setFixPreview] = useState<{
+    finding: Finding;
+    before: string;
+    after: string;
+  } | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [rightTab, setRightTab] = useState<RightPanelTab>('findings');
   const [leftCollapsed, setLeftCollapsed] = useState<boolean>(false);
@@ -82,12 +156,33 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    try {
-      window.localStorage.setItem('composure-theme', theme);
-    } catch {
-      // Ignore storage errors
-    }
+    writeStorage(STORAGE_KEYS.theme, theme);
   }, [theme]);
+
+  // Remember the muted rules and the current draft between visits
+  useEffect(() => {
+    writeStorage(STORAGE_KEYS.disabledRules, JSON.stringify(Array.from(disabledRuleIds)));
+  }, [disabledRuleIds]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      writeStorage(
+        STORAGE_KEYS.draft,
+        JSON.stringify({ yaml: yamlText, fileName, exampleId: activeExampleId }),
+      );
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [yamlText, fileName, activeExampleId]);
+
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 3200);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   // Close export menu on outside click
   useEffect(() => {
@@ -113,7 +208,9 @@ export function App() {
       const mod = isMac ? e.metaKey : e.ctrlKey;
 
       if (e.key === 'Escape') {
-        if (showSettingsDialog) {
+        if (fixPreview) {
+          setFixPreview(null);
+        } else if (showSettingsDialog) {
           setShowSettingsDialog(false);
         } else if (showExportMenu) {
           setShowExportMenu(false);
@@ -151,60 +248,74 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showSettingsDialog, showExportMenu, selectedNodeId]);
+  }, [showSettingsDialog, showExportMenu, selectedNodeId, fixPreview]);
 
-  // Load shared YAML from URL hash on mount
+  // Load shared YAML from the URL hash (on start and when the hash changes)
+  const sharedTextRef = useRef<string | null>(null);
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash && hash.length > 1) {
+    const loadFromHash = () => {
+      const hash = window.location.hash;
+      if (!hash.includes('compose=')) return;
       decompressYamlFromHash(hash).then((decoded) => {
         if (decoded) {
+          sharedTextRef.current = decoded;
           setYamlText(decoded);
           setActiveExampleId('custom');
           setFileName('shared-compose.yml');
-          const res = parseCompose(decoded);
-          if (res.ok) {
-            setParseErrors([]);
-            setLastValidModel(res.model);
-          } else {
-            setParseErrors(res.errors);
-          }
+          setSelectedNodeId(null);
+        } else {
+          showToast('This share link is damaged or was made by a newer version.');
         }
       });
-    }
-  }, []);
+    };
+    loadFromHash();
+    window.addEventListener('hashchange', loadFromHash);
+    return () => window.removeEventListener('hashchange', loadFromHash);
+  }, [showToast]);
 
-  // Debounced live parsing while typing
+  // Once the shared text is edited, the link in the address bar is stale
+  useEffect(() => {
+    if (
+      sharedTextRef.current !== null &&
+      yamlText !== sharedTextRef.current &&
+      window.location.hash.includes('compose=')
+    ) {
+      sharedTextRef.current = null;
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, [yamlText]);
+
+  // Debounced live analysis while typing
   useEffect(() => {
     const timer = window.setTimeout(() => {
       if (yamlText.trim().length === 0) {
         setParseErrors([]);
-        setLastValidModel(null);
+        setAnalysis(null);
         return;
       }
-      const result = parseCompose(yamlText);
+      const result = analyzeCompose(yamlText, { disabledRuleIds });
       if (result.ok) {
         setParseErrors([]);
-        setLastValidModel(result.model);
+        setAnalysis(result);
       } else {
         setParseErrors(result.errors);
       }
-    }, 200);
+    }, 180);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [yamlText]);
+  }, [yamlText, disabledRuleIds]);
 
-  const findings: Finding[] = useMemo(() => {
-    if (!lastValidModel) return [];
-    return runRules(lastValidModel, { disabledRuleIds });
-  }, [lastValidModel, disabledRuleIds]);
+  const findings: Finding[] = analysis?.findings ?? EMPTY_FINDINGS;
+  const diagnostics = analysis?.diagnostics ?? EMPTY_DIAGNOSTICS;
+  const problemCount =
+    parseErrors.length + diagnostics.filter((d) => d.severity !== 'info').length;
 
   const graph = useMemo(() => {
-    if (!lastValidModel) return { nodes: [], edges: [] };
-    return buildComposeGraph(lastValidModel, findings);
-  }, [lastValidModel, findings]);
+    if (!analysis) return { nodes: [], edges: [] };
+    return buildComposeGraph(analysis.model, analysis.findings);
+  }, [analysis]);
 
   const selectedNodeData: DiagramNodeData | null = useMemo(() => {
     if (!selectedNodeId) return null;
@@ -265,6 +376,42 @@ export function App() {
     handleJumpToLine(finding.line);
   };
 
+  const handleRequestFix = (finding: Finding) => {
+    const after = applyFindingFix(yamlText, finding);
+    if (after === null) {
+      showToast('This fix cannot be applied automatically here (for example because the value comes from a YAML anchor). Use the YAML example instead.');
+      return;
+    }
+    if (after === yamlText) {
+      showToast('Nothing to change: the file already contains this fix.');
+      return;
+    }
+    setFixPreview({ finding, before: yamlText, after });
+  };
+
+  const handleConfirmFix = () => {
+    if (!fixPreview) return;
+    // Only apply if the editor content did not change underneath the preview
+    if (yamlText === fixPreview.before) {
+      setYamlText(fixPreview.after);
+    } else {
+      const fresh = applyFindingFix(yamlText, fixPreview.finding);
+      if (fresh) setYamlText(fresh);
+    }
+    setFixPreview(null);
+  };
+
+  const handleSuppressFinding = (finding: Finding) => {
+    const reason = 'accepted risk';
+    const updated = addSuppressionComment(yamlText, finding.line, finding.ruleId, reason);
+    if (updated === yamlText) {
+      showToast(`${finding.ruleId} is already ignored on this line.`);
+      return;
+    }
+    setYamlText(updated);
+    showToast(`Added "# composure-ignore ${finding.ruleId}" above line ${finding.line}. Edit the reason after "--".`);
+  };
+
   const handleSelectExample = (exampleId: string) => {
     const ex = COMPOSE_EXAMPLES.find((e) => e.id === exampleId);
     if (!ex) return;
@@ -314,26 +461,32 @@ export function App() {
   };
 
   const handleShareUrl = async () => {
-    const encoded = await compressYamlToHash(yamlText);
-    const newHash = `#compose=${encoded}`;
-    window.history.replaceState(null, '', newHash);
-    const fullUrl = `${window.location.origin}${window.location.pathname}${newHash}`;
-    await navigator.clipboard?.writeText(fullUrl);
-    setShareCopied(true);
-    window.setTimeout(() => setShareCopied(false), 2000);
+    try {
+      const encoded = await compressYamlToHash(yamlText);
+      const newHash = `#compose=${encoded}`;
+      sharedTextRef.current = yamlText;
+      window.history.replaceState(null, '', newHash);
+      const fullUrl = `${window.location.origin}${window.location.pathname}${newHash}`;
+      if (fullUrl.length > 32000) {
+        showToast('Link created, but it is very long; some chat apps may cut it off.');
+      }
+      await navigator.clipboard.writeText(fullUrl);
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      showToast('Could not copy to the clipboard. The link is in the address bar.');
+    }
   };
 
   const handleExportMarkdown = () => {
-    if (!lastValidModel) return;
-    const md = generateFindingsMarkdown(lastValidModel, findings);
+    if (!analysis) return;
+    const md = generateFindingsMarkdown(analysis.model, analysis.findings, {
+      diagnostics: analysis.diagnostics,
+      suppressed: analysis.suppressed,
+      score: analysis.score,
+      fileName,
+    });
     downloadTextFile(md, 'composure-security-report.md');
-  };
-
-  const handleApplyFix = (finding: Finding) => {
-    const updatedYaml = applyFindingFix(yamlText, finding);
-    if (updatedYaml) {
-      setYamlText(updatedYaml);
-    }
   };
 
   return (
@@ -375,7 +528,7 @@ export function App() {
                 <rect x="9" y="9" width="5" height="5" rx="1.2" fillOpacity="0.4" />
               </svg>
             </div>
-            <span className="text-sm font-semibold tracking-tight text-[var(--text-primary)]">
+            <span className="hidden sm:inline text-sm font-semibold tracking-tight text-[var(--text-primary)]">
               Composure
             </span>
           </div>
@@ -398,43 +551,6 @@ export function App() {
               )}
             </select>
           </div>
-        </div>
-
-        {/* Mobile/Tablet (< 1024px) Tab Switcher */}
-        <div className="flex lg:hidden items-center bg-[var(--bg-elevated)] p-0.5 rounded border border-[var(--border-subtle)] text-xs">
-          <button
-            type="button"
-            onClick={() => setMobileTab('editor')}
-            className={`px-2.5 py-1 rounded transition-colors ${
-              mobileTab === 'editor'
-                ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
-                : 'text-[var(--text-secondary)]'
-            }`}
-          >
-            Editor
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobileTab('diagram')}
-            className={`px-2.5 py-1 rounded transition-colors ${
-              mobileTab === 'diagram'
-                ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
-                : 'text-[var(--text-secondary)]'
-            }`}
-          >
-            Diagram
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobileTab('findings')}
-            className={`px-2.5 py-1 rounded transition-colors ${
-              mobileTab === 'findings'
-                ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
-                : 'text-[var(--text-secondary)]'
-            }`}
-          >
-            Findings
-          </button>
         </div>
 
         {/* Right Controls: Open, Share, Export dropdown, Settings gear, Theme toggle */}
@@ -551,6 +667,45 @@ export function App() {
         </div>
       </header>
 
+      {/* Mobile/Tablet (< 1024px) Tab Switcher: its own row so header buttons stay visible */}
+      <nav className="lg:hidden h-9 px-3 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] flex items-center shrink-0">
+        <div className="flex w-full items-center bg-[var(--bg-elevated)] p-0.5 rounded border border-[var(--border-subtle)] text-xs">
+          <button
+            type="button"
+            onClick={() => setMobileTab('editor')}
+            className={`flex-1 px-2.5 py-1 rounded transition-colors ${
+              mobileTab === 'editor'
+                ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
+                : 'text-[var(--text-secondary)]'
+            }`}
+          >
+            Editor
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileTab('diagram')}
+            className={`flex-1 px-2.5 py-1 rounded transition-colors ${
+              mobileTab === 'diagram'
+                ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
+                : 'text-[var(--text-secondary)]'
+            }`}
+          >
+            Diagram
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileTab('findings')}
+            className={`flex-1 px-2.5 py-1 rounded transition-colors ${
+              mobileTab === 'findings'
+                ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
+                : 'text-[var(--text-secondary)]'
+            }`}
+          >
+            Findings
+          </button>
+        </div>
+      </nav>
+
       {/* Main Three-Area Workspace */}
       <main className="flex-1 flex min-h-0 overflow-hidden select-text">
         {/* 1. Left Area: Editor (Collapsible to a thin rail on desktop) */}
@@ -612,6 +767,7 @@ export function App() {
                 value={yamlText}
                 onChange={setYamlText}
                 errors={parseErrors}
+                diagnostics={diagnostics}
                 findings={findings}
                 theme={theme}
               />
@@ -689,7 +845,7 @@ export function App() {
           >
             {/* Right Panel Tab Header: Findings | Details */}
             <div className="h-9 px-3 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-4 h-full text-xs">
+              <div className="flex items-center gap-4 h-full text-xs min-w-0">
                 <button
                   type="button"
                   onClick={() => setRightTab('findings')}
@@ -707,6 +863,27 @@ export function App() {
 
                 <button
                   type="button"
+                  onClick={() => setRightTab('problems')}
+                  className={`h-full inline-flex items-center gap-1.5 border-b-2 font-medium transition-colors ${
+                    rightTab === 'problems'
+                      ? 'border-[var(--accent)] text-[var(--text-primary)]'
+                      : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  <span>Problems</span>
+                  <span
+                    className={`text-xs ${
+                      parseErrors.length > 0 || diagnostics.some((d) => d.severity === 'error')
+                        ? 'text-[var(--sev-critical-fg)]'
+                        : 'text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {problemCount}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setRightTab('details')}
                   className={`h-full inline-flex items-center gap-1.5 border-b-2 font-medium transition-colors ${
                     rightTab === 'details'
@@ -716,7 +893,7 @@ export function App() {
                 >
                   <span>Details</span>
                   {selectedNodeData?.kind === 'service' && (
-                    <span className="text-xs text-[var(--text-muted)] truncate max-w-[110px]">
+                    <span className="text-xs text-[var(--text-muted)] truncate max-w-[84px]">
                       {selectedNodeData.service.name}
                     </span>
                   )}
@@ -728,9 +905,8 @@ export function App() {
                 onClick={() => setRightCollapsed(true)}
                 title="Collapse panel (Cmd+\)"
                 aria-label="Collapse panel"
-                className="hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] border border-transparent hover:border-[var(--border-subtle)] transition-colors cursor-pointer"
+                className="hidden lg:inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] border border-transparent hover:border-[var(--border-subtle)] transition-colors cursor-pointer shrink-0"
               >
-                <span>Collapse</span>
                 <ChevronRightIcon className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -738,11 +914,27 @@ export function App() {
             {/* Tab Content */}
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
               {rightTab === 'findings' ? (
-                <FindingsPanel
-                  findings={findings}
-                  onToggleRule={handleToggleRule}
-                  onSelectFinding={handleSelectFinding}
-                  onApplyFix={handleApplyFix}
+                analysis ? (
+                  <FindingsPanel
+                    findings={findings}
+                    suppressed={analysis.suppressed}
+                    score={analysis.score}
+                    onToggleRule={handleToggleRule}
+                    onSelectFinding={handleSelectFinding}
+                    onJumpToLine={handleJumpToLine}
+                    onApplyFix={handleRequestFix}
+                    onSuppress={handleSuppressFinding}
+                  />
+                ) : (
+                  <div className="p-6 text-center text-xs text-[var(--text-secondary)]">
+                    Paste a docker-compose.yml to see findings.
+                  </div>
+                )
+              ) : rightTab === 'problems' ? (
+                <ProblemsPanel
+                  parseErrors={parseErrors}
+                  diagnostics={diagnostics}
+                  onJumpToLine={handleJumpToLine}
                 />
               ) : (
                 <NodeDetailsPanel
@@ -862,6 +1054,27 @@ export function App() {
                 </div>
               </div>
 
+              {/* Accepting risks inline */}
+              <div className="space-y-1.5 text-[var(--text-secondary)] leading-relaxed">
+                <div className="font-medium text-[var(--text-primary)]">
+                  Accepting a risk for one line or service
+                </div>
+                <p>
+                  Muting a rule here turns it off everywhere. To accept a single
+                  finding instead, put a comment above (or at the end of) the line:
+                </p>
+                <pre className="p-2 rounded bg-[var(--bg-app)] border border-[var(--border-subtle)] font-mono text-xs text-[var(--text-primary)] overflow-x-auto">
+{`# composure-ignore CMP002 -- Traefik needs the socket
+- /var/run/docker.sock:/var/run/docker.sock:ro`}
+                </pre>
+                <p>
+                  Above a service name it applies to the whole service;{' '}
+                  <code className="font-mono">composure-ignore-file</code> applies
+                  to the whole file. Accepted findings no longer count toward the
+                  score, and the same comments work in the CLI.
+                </p>
+              </div>
+
               {/* About & Privacy */}
               <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2 text-[var(--text-secondary)] leading-relaxed">
                 <div className="font-medium text-[var(--text-primary)]">
@@ -885,6 +1098,26 @@ export function App() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {fixPreview && fixPreview.finding.autofix && (
+        <FixPreviewDialog
+          title={`Fix ${fixPreview.finding.ruleId}: ${fixPreview.finding.autofix.label}`}
+          subtitle={`Service "${fixPreview.finding.service}" · ${fixPreview.finding.title}`}
+          before={fixPreview.before}
+          after={fixPreview.after}
+          onApply={handleConfirmFix}
+          onCancel={() => setFixPreview(null)}
+        />
+      )}
+
+      {toast && (
+        <div
+          role="status"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-md px-4 py-2.5 rounded-md bg-[var(--bg-panel)] border border-[var(--border-strong)] shadow-lg text-xs text-[var(--text-primary)]"
+        >
+          {toast}
         </div>
       )}
     </div>

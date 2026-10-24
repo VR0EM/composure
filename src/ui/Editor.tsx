@@ -22,15 +22,25 @@ import {
   keymap,
   lineNumbers,
 } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+} from '@codemirror/commands';
 import {
   HighlightStyle,
   bracketMatching,
+  indentOnInput,
   syntaxHighlighting,
 } from '@codemirror/language';
 import { yaml } from '@codemirror/lang-yaml';
+import { Diagnostic, lintKeymap, setDiagnostics } from '@codemirror/lint';
+import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
+import { autocompletion, completionKeymap } from '@codemirror/autocomplete';
 import { tags } from '@lezer/highlight';
-import { ComposeParseError, Finding, Severity } from '../core';
+import { ComposeDiagnostic, ComposeParseError, Finding, Severity } from '../core';
+import { composeCompletionSource } from './composeCompletions';
 
 export interface EditorHandle {
   jumpToLine: (line: number) => void;
@@ -46,6 +56,7 @@ interface ComposeEditorProps {
   value: string;
   onChange: (nextValue: string) => void;
   errors?: ComposeParseError[];
+  diagnostics?: ComposeDiagnostic[];
   findings?: Finding[];
   theme?: 'dark' | 'light';
 }
@@ -219,8 +230,7 @@ function buildEditorTheme(isDark: boolean) {
         backgroundColor: 'var(--bg-panel)',
         color: 'var(--text-primary)',
         fontSize: '12.5px',
-        fontFamily:
-          'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+        fontFamily: 'var(--font-mono)',
       },
       '.cm-scroller': {
         overflow: 'auto',
@@ -259,6 +269,63 @@ function buildEditorTheme(isDark: boolean) {
       '.cm-cursor': {
         borderLeftColor: 'var(--accent)',
       },
+      '.cm-tooltip': {
+        backgroundColor: 'var(--bg-panel)',
+        color: 'var(--text-primary)',
+        border: '1px solid var(--border-strong)',
+        borderRadius: '6px',
+        boxShadow: 'var(--node-shadow)',
+        fontFamily: 'var(--font-sans)',
+        fontSize: '12px',
+        maxWidth: '420px',
+      },
+      '.cm-tooltip-lint': { padding: '2px 0' },
+      '.cm-diagnostic': { padding: '4px 8px', borderLeftWidth: '3px' },
+      '.cm-diagnostic-error': { borderLeftColor: 'var(--sev-critical-border)' },
+      '.cm-diagnostic-warning': { borderLeftColor: 'var(--sev-medium-border)' },
+      '.cm-diagnostic-info': { borderLeftColor: 'var(--sev-low-border)' },
+      '.cm-lintRange-error': {
+        backgroundImage: 'none',
+        textDecoration: 'underline wavy var(--sev-critical-border)',
+        textUnderlineOffset: '3px',
+      },
+      '.cm-lintRange-warning': {
+        backgroundImage: 'none',
+        textDecoration: 'underline wavy var(--sev-medium-border)',
+        textUnderlineOffset: '3px',
+      },
+      '.cm-lintRange-info': {
+        backgroundImage: 'none',
+        textDecoration: 'underline dotted var(--sev-low-border)',
+        textUnderlineOffset: '3px',
+      },
+      '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+        backgroundColor: 'var(--accent-bg)',
+        color: 'var(--text-primary)',
+      },
+      '.cm-completionDetail': { color: 'var(--text-muted)', fontStyle: 'normal', marginLeft: '8px' },
+      '.cm-panels': {
+        backgroundColor: 'var(--bg-elevated)',
+        color: 'var(--text-primary)',
+        borderTop: '1px solid var(--border-subtle)',
+      },
+      '.cm-panels input, .cm-panels button': { fontSize: '12px' },
+      '.cm-textfield': {
+        backgroundColor: 'var(--bg-panel)',
+        border: '1px solid var(--border-strong)',
+        color: 'var(--text-primary)',
+        borderRadius: '4px',
+      },
+      '.cm-button': {
+        backgroundImage: 'none',
+        backgroundColor: 'var(--bg-panel)',
+        border: '1px solid var(--border-strong)',
+        color: 'var(--text-primary)',
+        borderRadius: '4px',
+      },
+      '.cm-searchMatch': { backgroundColor: 'var(--sev-medium-chip-bg)' },
+      '.cm-searchMatch-selected': { backgroundColor: 'var(--editor-selection)' },
+      '.cm-selectionMatch': { backgroundColor: 'var(--editor-line-highlight)' },
     },
     { dark: isDark },
   );
@@ -273,7 +340,7 @@ function getThemeExtensions(theme: 'dark' | 'light') {
 
 export const ComposeEditor = forwardRef<EditorHandle, ComposeEditorProps>(
   function ComposeEditor(
-    { value, onChange, errors = [], findings = [], theme = 'dark' },
+    { value, onChange, errors = [], diagnostics = [], findings = [], theme = 'dark' },
     ref,
   ) {
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -324,12 +391,24 @@ export const ComposeEditor = forwardRef<EditorHandle, ComposeEditorProps>(
           highlightActiveLine(),
           history(),
           bracketMatching(),
+          indentOnInput(),
           yaml(),
+          search({ top: true }),
+          highlightSelectionMatches(),
+          autocompletion({ override: [composeCompletionSource], icons: false }),
+          EditorState.tabSize.of(2),
           themeCompartmentRef.current.of(getThemeExtensions(theme)),
           markersField,
           flashLineField,
           errorLineDecorations,
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          keymap.of([
+            ...completionKeymap,
+            ...searchKeymap,
+            ...lintKeymap,
+            ...defaultKeymap,
+            ...historyKeymap,
+            indentWithTab,
+          ]),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               onChangeRef.current(update.state.doc.toString());
@@ -367,15 +446,27 @@ export const ComposeEditor = forwardRef<EditorHandle, ComposeEditorProps>(
       const view = viewRef.current;
       if (!view) return;
       const currentDoc = view.state.doc.toString();
-      if (currentDoc !== value) {
-        view.dispatch({
-          changes: {
-            from: 0,
-            to: currentDoc.length,
-            insert: value,
-          },
-        });
+      if (currentDoc === value) return;
+      // Replace only the changed middle part, so the cursor, scroll position
+      // and undo history survive external edits such as applied fixes.
+      let start = 0;
+      const maxStart = Math.min(currentDoc.length, value.length);
+      while (start < maxStart && currentDoc.charCodeAt(start) === value.charCodeAt(start)) {
+        start++;
       }
+      let endOld = currentDoc.length;
+      let endNew = value.length;
+      while (
+        endOld > start &&
+        endNew > start &&
+        currentDoc.charCodeAt(endOld - 1) === value.charCodeAt(endNew - 1)
+      ) {
+        endOld--;
+        endNew--;
+      }
+      view.dispatch({
+        changes: { from: start, to: endOld, insert: value.slice(start, endNew) },
+      });
     }, [value]);
 
     useEffect(() => {
@@ -395,10 +486,41 @@ export const ComposeEditor = forwardRef<EditorHandle, ComposeEditorProps>(
         })),
       ];
 
+      const lintDiagnostics: Diagnostic[] = [];
+      const doc = view.state.doc;
+      const toRange = (line: number, column?: number) => {
+        const lineInfo = doc.line(Math.max(1, Math.min(line, doc.lines)));
+        const indent = lineInfo.text.length - lineInfo.text.trimStart().length;
+        const from = column ? Math.min(lineInfo.to, lineInfo.from + column - 1) : lineInfo.from + indent;
+        return { from, to: Math.max(from, lineInfo.to) };
+      };
+      for (const e of errors) {
+        lintDiagnostics.push({ ...toRange(e.line, e.column), severity: 'error', message: e.message, source: 'YAML' });
+      }
+      for (const d of diagnostics) {
+        lintDiagnostics.push({
+          ...toRange(d.line, d.column),
+          severity: d.severity,
+          message: d.message.replace(/`/g, ''),
+          source: `compose: ${d.code}`,
+        });
+      }
+
+      markers.push(
+        ...diagnostics
+          .filter((d) => d.severity !== 'info')
+          .map((d) => ({
+            line: d.line,
+            severity: d.severity === 'error' ? ('error' as const) : ('medium' as const),
+            tooltip: `${d.severity === 'error' ? 'Error' : 'Warning'}: ${d.message.replace(/`/g, '')}`,
+          })),
+      );
+
+      view.dispatch(setDiagnostics(view.state, lintDiagnostics));
       view.dispatch({
         effects: setMarkersEffect.of(markers),
       });
-    }, [errors, findings]);
+    }, [errors, diagnostics, findings]);
 
     return <div ref={containerRef} className="w-full h-full overflow-hidden" />;
   },
