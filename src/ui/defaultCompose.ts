@@ -34,8 +34,11 @@ services:
       - frontend
       - backend
     depends_on:
-      - db
-      - cache
+      db:
+        condition: service_started
+      cache:
+        condition: service_started
+        required: false # cache only runs with the "cache" profile
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 15s

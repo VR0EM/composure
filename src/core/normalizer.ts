@@ -11,6 +11,7 @@ import {
 } from 'yaml';
 import {
   BuildConfig,
+  ComposeDiagnostic,
   ComposeModel,
   ComposeParseError,
   DeviceMapping,
@@ -20,16 +21,19 @@ import {
   LocatedString,
   LoggingConfig,
   NormalizedNetwork,
+  NormalizedResource,
   NormalizedService,
   NormalizedVolume,
   PortMapping,
   ResourceLimits,
   ServiceDependency,
   ServiceNetwork,
+  ServiceResourceRef,
   SourceLocation,
   VolumeMount,
   VolumeMountType,
 } from './types';
+import { collectAstDiagnostics } from './astDiagnostics';
 
 /**
  * Extract 1-based line and column locations from any YAML AST node or Pair.
@@ -347,6 +351,15 @@ export function isBindMountSource(
   return false;
 }
 
+const PROPAGATION_MODES = new Set([
+  'shared',
+  'rshared',
+  'slave',
+  'rslave',
+  'private',
+  'rprivate',
+]);
+
 /**
  * Parse a short-syntax volume string, e.g.:
  * - "/var/lib/mysql" (anonymous volume)
@@ -386,6 +399,7 @@ export function parseShortVolume(
   const type: VolumeMountType = isBindMountSource(source, declaredVolumes)
     ? 'bind'
     : 'volume';
+  const propagation = modes.find((m) => PROPAGATION_MODES.has(m));
 
   return {
     ...loc,
@@ -394,6 +408,7 @@ export function parseShortVolume(
     target,
     readOnly,
     ...(modeStr !== undefined ? { mode: modeStr } : {}),
+    ...(propagation !== undefined && type === 'bind' ? { propagation } : {}),
     syntax: 'short',
   };
 }
@@ -598,12 +613,22 @@ function normalizeVolumes(
           scalarToBoolean(resolveAstNode(fields.get('read_only')?.value, doc)) ??
           false;
 
+        let propagation: string | undefined;
+        const bindOpts = resolveAstNode(fields.get('bind')?.value, doc);
+        if (isMap(bindOpts)) {
+          propagation =
+            scalarToString(
+              resolveAstNode(getMapFieldMap(bindOpts, doc).get('propagation')?.value, doc),
+            )?.toLowerCase() ?? undefined;
+        }
+
         mounts.push({
           ...loc,
           type,
           ...(source !== undefined && type !== 'tmpfs' ? { source } : {}),
           target,
           readOnly: readOnlyVal,
+          ...(propagation && type === 'bind' ? { propagation } : {}),
           syntax: 'long',
         });
       }
@@ -1144,15 +1169,95 @@ function normalizeBuild(
   return undefined;
 }
 
+function normalizeServiceResourceRefs(
+  node: unknown,
+  doc: Document,
+  lineCounter: LineCounter,
+  fallbackLine: number,
+): ServiceResourceRef[] {
+  const resolved = resolveAstNode(node, doc);
+  if (!isSeq(resolved)) return [];
+  const refs: ServiceResourceRef[] = [];
+  for (const item of resolved.items) {
+    const resolvedItem = resolveAstNode(item, doc);
+    const loc = getNodeLocation(item, lineCounter, fallbackLine);
+    if (isScalar(resolvedItem)) {
+      const source = scalarToString(resolvedItem);
+      if (source) refs.push({ ...loc, source });
+    } else if (isMap(resolvedItem)) {
+      const fields = getMapFieldMap(resolvedItem, doc);
+      const source = scalarToString(resolveAstNode(fields.get('source')?.value, doc));
+      if (!source) continue;
+      const target =
+        scalarToString(resolveAstNode(fields.get('target')?.value, doc)) ?? undefined;
+      refs.push({ ...loc, source, ...(target ? { target } : {}) });
+    }
+  }
+  return refs;
+}
+
+function normalizeTopLevelResources(
+  pair: Pair | undefined,
+  doc: Document,
+  lineCounter: LineCounter,
+): Record<string, NormalizedResource> {
+  const result: Record<string, NormalizedResource> = {};
+  if (!pair) return result;
+  const map = resolveAstNode(pair.value, doc);
+  if (!isMap(map)) return result;
+  for (const entry of getEffectiveMapPairs(map, doc)) {
+    const name = scalarToString(entry.key);
+    if (!name || name.startsWith('x-')) continue;
+    const loc = getNodeLocation(entry, lineCounter, 1);
+    const val = resolveAstNode(entry.value, doc);
+    let sourceKind: NormalizedResource['sourceKind'];
+    let sourceValue: string | undefined;
+    if (isMap(val)) {
+      const f = getMapFieldMap(val, doc);
+      const str = (key: string) =>
+        scalarToString(resolveAstNode(f.get(key)?.value, doc)) ?? undefined;
+      const externalNode = resolveAstNode(f.get('external')?.value, doc);
+      if (scalarToBoolean(externalNode) === true || isMap(externalNode)) {
+        sourceKind = 'external';
+      } else if (str('file')) {
+        sourceKind = 'file';
+        sourceValue = str('file');
+      } else if (str('environment')) {
+        sourceKind = 'environment';
+        sourceValue = str('environment');
+      } else if (f.has('content')) {
+        sourceKind = 'content';
+      }
+    }
+    result[name] = {
+      ...loc,
+      name,
+      ...(sourceKind ? { sourceKind } : {}),
+      ...(sourceValue ? { sourceValue } : {}),
+    };
+  }
+  return result;
+}
+
+function toPositiveInt(value: string | null | undefined): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (!/^\d+$/.test(value.trim())) return undefined;
+  return Number(value.trim());
+}
+
 /**
  * Normalize an entire parsed YAML Document into a ComposeModel.
  */
 export function normalizeComposeDocument(
   doc: Document,
   lineCounter: LineCounter,
-): { model?: ComposeModel; errors: ComposeParseError[]; warnings: ComposeParseError[] } {
+): {
+  model?: ComposeModel;
+  errors: ComposeParseError[];
+  diagnostics: ComposeDiagnostic[];
+} {
   const errors: ComposeParseError[] = [];
-  const warnings: ComposeParseError[] = [];
+  const diagnostics: ComposeDiagnostic[] = [];
 
   const root = resolveAstNode(doc.contents, doc);
   if (!root || !isMap(root)) {
@@ -1162,10 +1267,14 @@ export function normalizeComposeDocument(
       line: loc.line,
       column: loc.column,
     });
-    return { errors, warnings };
+    return { errors, diagnostics };
   }
 
   const rootFields = getMapFieldMap(root, doc);
+  const topLevelLines: Record<string, number> = {};
+  for (const [k, pair] of rootFields.entries()) {
+    topLevelLines[k] = getNodeLocation(pair, lineCounter, 1).line;
+  }
 
   const servicesPair = rootFields.get('services');
   if (!servicesPair) {
@@ -1175,7 +1284,7 @@ export function normalizeComposeDocument(
       line: loc.line,
       column: loc.column,
     });
-    return { errors, warnings };
+    return { errors, diagnostics };
   }
 
   const servicesNode = resolveAstNode(servicesPair.value, doc);
@@ -1186,15 +1295,19 @@ export function normalizeComposeDocument(
       line: loc.line,
       column: loc.column,
     });
-    return { errors, warnings };
+    return { errors, diagnostics };
   }
 
   const version =
     scalarToString(resolveAstNode(rootFields.get('version')?.value, doc)) ??
     undefined;
+  const versionLine = rootFields.has('version') ? topLevelLines['version'] : undefined;
   const name =
     scalarToString(resolveAstNode(rootFields.get('name')?.value, doc)) ??
     undefined;
+
+  const secrets = normalizeTopLevelResources(rootFields.get('secrets'), doc, lineCounter);
+  const configs = normalizeTopLevelResources(rootFields.get('configs'), doc, lineCounter);
 
   // 1. Parse top-level networks
   const networks: Record<string, NormalizedNetwork> = {};
@@ -1455,6 +1568,61 @@ export function normalizeComposeDocument(
       ? fieldLines['userns_mode']
       : undefined;
 
+    const uts =
+      scalarToString(resolveAstNode(sFields.get('uts')?.value, doc)) ?? undefined;
+    const utsLine = sFields.has('uts') ? fieldLines['uts'] : undefined;
+
+    const cgroup =
+      scalarToString(resolveAstNode(sFields.get('cgroup')?.value, doc)) ?? undefined;
+    const cgroupLine = sFields.has('cgroup') ? fieldLines['cgroup'] : undefined;
+
+    const restart =
+      scalarToString(resolveAstNode(sFields.get('restart')?.value, doc)) ?? undefined;
+
+    // pids_limit (service level) or deploy.resources.limits.pids
+    let pidsLimit =
+      scalarToString(resolveAstNode(sFields.get('pids_limit')?.value, doc)) ?? undefined;
+    let pidsLimitLine = sFields.has('pids_limit') ? fieldLines['pids_limit'] : undefined;
+    let replicas = toPositiveInt(
+      scalarToString(resolveAstNode(sFields.get('scale')?.value, doc)),
+    );
+    const deployNode = resolveAstNode(sFields.get('deploy')?.value, doc);
+    if (isMap(deployNode)) {
+      const deployFields = getMapFieldMap(deployNode, doc);
+      replicas =
+        toPositiveInt(
+          scalarToString(resolveAstNode(deployFields.get('replicas')?.value, doc)),
+        ) ?? replicas;
+      const resources = resolveAstNode(deployFields.get('resources')?.value, doc);
+      if (isMap(resources)) {
+        const limits = resolveAstNode(
+          getMapFieldMap(resources, doc).get('limits')?.value,
+          doc,
+        );
+        if (isMap(limits)) {
+          const pidsPair = getMapFieldMap(limits, doc).get('pids');
+          const pidsVal = scalarToString(resolveAstNode(pidsPair?.value, doc));
+          if (pidsPair && pidsVal) {
+            pidsLimit = pidsVal;
+            pidsLimitLine = getNodeLocation(pidsPair, lineCounter, serviceLoc.line).line;
+          }
+        }
+      }
+    }
+
+    const serviceSecrets = normalizeServiceResourceRefs(
+      sFields.get('secrets')?.value,
+      doc,
+      lineCounter,
+      fieldLines['secrets'] ?? serviceLoc.line,
+    );
+    const serviceConfigs = normalizeServiceResourceRefs(
+      sFields.get('configs')?.value,
+      doc,
+      lineCounter,
+      fieldLines['configs'] ?? serviceLoc.line,
+    );
+
     const capAdd = normalizeLocatedStringList(
       sFields.get('cap_add')?.value,
       doc,
@@ -1553,6 +1721,16 @@ export function normalizeComposeDocument(
       ...(ipcLine !== undefined ? { ipcLine } : {}),
       ...(usernsMode !== undefined ? { usernsMode } : {}),
       ...(usernsModeLine !== undefined ? { usernsModeLine } : {}),
+      ...(uts !== undefined ? { uts } : {}),
+      ...(utsLine !== undefined ? { utsLine } : {}),
+      ...(cgroup !== undefined ? { cgroup } : {}),
+      ...(cgroupLine !== undefined ? { cgroupLine } : {}),
+      ...(pidsLimit !== undefined ? { pidsLimit } : {}),
+      ...(pidsLimitLine !== undefined ? { pidsLimitLine } : {}),
+      ...(replicas !== undefined ? { replicas } : {}),
+      ...(restart !== undefined ? { restart } : {}),
+      secrets: serviceSecrets,
+      configs: serviceConfigs,
       capAdd,
       ...(capAddLine !== undefined ? { capAddLine } : {}),
       capDrop,
@@ -1570,7 +1748,7 @@ export function normalizeComposeDocument(
   }
 
   if (errors.length > 0) {
-    return { errors, warnings };
+    return { errors, diagnostics };
   }
 
   if (Object.keys(services).length === 0) {
@@ -1580,7 +1758,7 @@ export function normalizeComposeDocument(
       line: loc.line,
       column: loc.column,
     });
-    return { errors, warnings };
+    return { errors, diagnostics };
   }
 
   if (usesImplicitDefaultNetwork && !networks['default']) {
@@ -1591,15 +1769,21 @@ export function normalizeComposeDocument(
     };
   }
 
+  diagnostics.push(...collectAstDiagnostics(doc, lineCounter));
+
   return {
     model: {
       ...(version !== undefined ? { version } : {}),
+      ...(versionLine !== undefined ? { versionLine } : {}),
       ...(name !== undefined ? { name } : {}),
       services,
       networks,
       volumes,
+      secrets,
+      configs,
+      topLevelLines,
     },
     errors,
-    warnings,
+    diagnostics,
   };
 }

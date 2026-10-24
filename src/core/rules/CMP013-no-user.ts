@@ -1,4 +1,5 @@
 import { ComposeModel, Finding, Rule } from '../types';
+import { OWASP_DOCKER_CHEAT_SHEET, cis } from './shared';
 
 function isExplicitRootUser(user: string): boolean {
   const normalized = user.trim().toLowerCase();
@@ -27,13 +28,10 @@ export const CMP013: Rule = {
     'Without a non-root UID, the container defaults to the image user (often `root`).',
   fix: buildFix('app'),
   references: [
-    {
-      title: 'CIS Docker Benchmark 4.1: Ensure a user for the container has been created',
-      url: 'https://www.cisecurity.org/benchmark/docker',
-    },
+    cis('4.1', 'Ensure that a user for the container has been created'),
     {
       title: 'OWASP Docker Security Cheat Sheet: Rule 2, Set a user',
-      url: 'https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html',
+      url: OWASP_DOCKER_CHEAT_SHEET,
     },
   ],
   check(model: ComposeModel): Finding[] {

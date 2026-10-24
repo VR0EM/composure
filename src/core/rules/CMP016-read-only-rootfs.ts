@@ -1,4 +1,5 @@
 import { ComposeModel, Finding, Rule } from '../types';
+import { OWASP_DOCKER_CHEAT_SHEET, cis } from './shared';
 
 function buildFix(serviceName: string): string {
   return `Enable \`read_only: true\` and mount \`tmpfs\` for paths that need runtime writes:
@@ -19,13 +20,10 @@ export const CMP016: Rule = {
     'Setting `read_only: true` prevents processes from modifying container binaries.',
   fix: buildFix('app'),
   references: [
+    cis('5.13', "Ensure that the container's root filesystem is mounted as read only"),
     {
-      title: 'CIS Docker Benchmark 5.12: Mount the container root filesystem as read-only',
-      url: 'https://www.cisecurity.org/benchmark/docker',
-    },
-    {
-      title: 'OWASP Docker Security Cheat Sheet: Rule 7, Use a read-only filesystem',
-      url: 'https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html',
+      title: 'OWASP Docker Security Cheat Sheet: Rule 8, Use a read-only filesystem',
+      url: OWASP_DOCKER_CHEAT_SHEET,
     },
   ],
   check(model: ComposeModel): Finding[] {
@@ -43,6 +41,26 @@ export const CMP016: Rule = {
           message: 'Root filesystem is writable.',
           fix: buildFix(service.name),
           references: this.references,
+          autofix: service.volumes.some((v) => v.target.replace(/\/+$/, '') === '/tmp')
+            ? {
+                label: 'Set read_only: true',
+                operations: [
+                  { kind: 'setScalar', service: service.name, key: 'read_only', value: true },
+                ],
+              }
+            : {
+                label: 'Set read_only: true + tmpfs /tmp',
+                operations: [
+                  { kind: 'setScalar', service: service.name, key: 'read_only', value: true },
+                  {
+                    kind: 'addListItem',
+                    service: service.name,
+                    key: 'tmpfs',
+                    item: '/tmp',
+                    compare: 'mountTarget',
+                  },
+                ],
+              },
         });
       }
     }

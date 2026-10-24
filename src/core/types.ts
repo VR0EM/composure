@@ -55,6 +55,8 @@ export interface VolumeMount extends SourceLocation {
   readOnly: boolean;
   /** Additional mode flags if specified (e.g. "z", "Z", "cached") */
   mode?: string;
+  /** Bind mount propagation mode, e.g. "rprivate", "shared", "rshared" */
+  propagation?: string;
   /** Syntax used in the compose file */
   syntax: 'short' | 'long' | 'tmpfs';
 }
@@ -139,6 +141,14 @@ export interface BuildConfig extends SourceLocation {
   dockerfile?: string;
 }
 
+/** A service-level reference to a top-level secret or config. */
+export interface ServiceResourceRef extends SourceLocation {
+  /** Name of the top-level secret/config */
+  source: string;
+  /** Mount target inside the container, if specified */
+  target?: string;
+}
+
 export interface NormalizedService extends SourceLocation {
   name: string;
   image?: string;
@@ -168,6 +178,18 @@ export interface NormalizedService extends SourceLocation {
   ipcLine?: number;
   usernsMode?: string;
   usernsModeLine?: number;
+  uts?: string;
+  utsLine?: number;
+  cgroup?: string;
+  cgroupLine?: number;
+  /** PIDs limit from `pids_limit` or `deploy.resources.limits.pids` */
+  pidsLimit?: string;
+  pidsLimitLine?: number;
+  /** Replica count from `deploy.replicas` or `scale` */
+  replicas?: number;
+  restart?: string;
+  secrets: ServiceResourceRef[];
+  configs: ServiceResourceRef[];
   capAdd: LocatedString[];
   capAddLine?: number;
   capDrop: LocatedString[];
@@ -201,9 +223,18 @@ export interface NormalizedVolume extends SourceLocation {
   implicit: boolean;
 }
 
+export interface NormalizedResource extends SourceLocation {
+  name: string;
+  /** Where the content comes from: "file", "environment", "content", or "external" */
+  sourceKind?: 'file' | 'environment' | 'content' | 'external';
+  /** File path, environment variable name, or inline content marker */
+  sourceValue?: string;
+}
+
 export interface ComposeModel {
   /** Optional legacy version string if present */
   version?: string;
+  versionLine?: number;
   /** Optional compose project name */
   name?: string;
   /** Normalized services keyed by service name */
@@ -212,6 +243,12 @@ export interface ComposeModel {
   networks: Record<string, NormalizedNetwork>;
   /** Normalized named volumes keyed by volume name */
   volumes: Record<string, NormalizedVolume>;
+  /** Top-level secrets keyed by name */
+  secrets: Record<string, NormalizedResource>;
+  /** Top-level configs keyed by name */
+  configs: Record<string, NormalizedResource>;
+  /** Line numbers of top-level keys */
+  topLevelLines: Record<string, number>;
 }
 
 export interface ComposeParseError {
@@ -221,13 +258,57 @@ export interface ComposeParseError {
   endLine?: number;
 }
 
+export type DiagnosticSeverity = 'error' | 'warning' | 'info';
+
+/**
+ * A Compose correctness problem (as opposed to a security finding):
+ * things `docker compose` would reject, or would silently do differently
+ * than the author probably intended.
+ */
+export interface ComposeDiagnostic extends SourceLocation {
+  /** Stable kebab-case identifier, e.g. "undefined-network" */
+  code: string;
+  severity: DiagnosticSeverity;
+  message: string;
+  /** Service the problem belongs to, when applicable */
+  service?: string;
+}
+
 export type ParseResult =
-  | { ok: true; model: ComposeModel; warnings: ComposeParseError[] }
+  | { ok: true; model: ComposeModel; diagnostics: ComposeDiagnostic[] }
   | { ok: false; errors: ComposeParseError[] };
 
 export interface RuleReference {
   title: string;
   url: string;
+}
+
+/**
+ * A single structured edit that an autofix performs on the Compose file.
+ * Values are plain strings; the patcher takes care of YAML quoting.
+ */
+export type FixOperation =
+  /** Set (or override) a scalar key on the service, e.g. `read_only: true` */
+  | { kind: 'setScalar'; service: string; key: string; value: string | boolean | number }
+  /** Remove a key from the service (only when the service defines it itself) */
+  | { kind: 'removeKey'; service: string; key: string }
+  /** Ensure a list key on the service contains an item */
+  | { kind: 'addListItem'; service: string; key: string; item: string; compare?: ListCompareMode }
+  /** Remove matching items from a list key on the service */
+  | { kind: 'removeListItem'; service: string; key: string; item: string; compare?: ListCompareMode }
+  /** Replace a literal environment value with another value (e.g. `${VAR}`) */
+  | { kind: 'setEnvValue'; service: string; envKey: string; value: string }
+  /** Bind the n-th entry of `ports` to a specific host IP */
+  | { kind: 'bindPortHostIp'; service: string; index: number; hostIp: string }
+  /** Set nested mapping values, e.g. logging.options.max-size */
+  | { kind: 'setNested'; service: string; path: string[]; value: string };
+
+export type ListCompareMode = 'exact' | 'capability' | 'securityOpt' | 'mountTarget';
+
+export interface Autofix {
+  /** Short, imperative description shown on the button, e.g. "Bind to 127.0.0.1" */
+  label: string;
+  operations: FixOperation[];
 }
 
 export interface Finding {
@@ -241,6 +322,8 @@ export interface Finding {
   message: string;
   fix: string;
   references: RuleReference[];
+  /** Safe, structured remediation that can be applied automatically */
+  autofix?: Autofix;
 }
 
 export interface Rule {

@@ -1,15 +1,32 @@
 import { ComposeModel, Finding, Rule } from '../types';
+import { fixWithYaml } from './shared';
 
-function extractTag(image: string): {
+export interface ImageReferenceParts {
   hasDigest: boolean;
   baseImage: string;
+  /** Tag as written, or null when omitted */
   tag: string | null;
-} {
+  /** Tag after resolving a `${VAR:-default}` fallback, or null when unknown */
+  effectiveTag: string | null;
+  /** True when the whole reference is a variable such as `${IMAGE}` */
+  fullyInterpolated: boolean;
+}
+
+export function parseImageReference(image: string): ImageReferenceParts {
   const trimmed = image.trim();
-  if (trimmed.includes('@sha256:')) {
-    return { hasDigest: true, baseImage: trimmed, tag: null };
+  const fullyInterpolated = /^\$\{[^}]+\}$/.test(trimmed) || /^\$[A-Za-z_]\w*$/.test(trimmed);
+  if (/@sha256:/i.test(trimmed)) {
+    return {
+      hasDigest: true,
+      baseImage: trimmed.split('@')[0] ?? trimmed,
+      tag: null,
+      effectiveTag: null,
+      fullyInterpolated,
+    };
   }
 
+  // Find the tag colon after the last slash (so `registry:5000/app` is not split),
+  // ignoring colons inside `${...}` interpolations.
   let colonIdx = -1;
   let braceDepth = 0;
   const lastSlash = trimmed.lastIndexOf('/');
@@ -24,26 +41,32 @@ function extractTag(image: string): {
   }
 
   if (colonIdx === -1) {
-    return { hasDigest: false, baseImage: trimmed, tag: null };
+    return { hasDigest: false, baseImage: trimmed, tag: null, effectiveTag: null, fullyInterpolated };
   }
 
   const baseImage = trimmed.slice(0, colonIdx);
-  const tag = trimmed.slice(colonIdx + 1).trim();
-  return {
-    hasDigest: false,
-    baseImage,
-    tag: tag.length > 0 ? tag : null,
-  };
+  const tag = trimmed.slice(colonIdx + 1).trim() || null;
+  let effectiveTag = tag;
+  if (tag) {
+    const fallback = /^\$\{[A-Za-z_]\w*:?-([^}]*)\}$/.exec(tag);
+    if (fallback) {
+      effectiveTag = fallback[1] || null;
+    } else if (tag.includes('$')) {
+      effectiveTag = null;
+    }
+  }
+  return { hasDigest: false, baseImage, tag, effectiveTag, fullyInterpolated };
 }
 
-function buildFix(serviceName: string, baseImage = 'nginx', tag = '1.27-alpine'): string {
-  const cleanTag = tag === 'latest' ? '1.0.0' : tag;
-  return `Pin the image to an explicit version tag and SHA256 digest:
-\`\`\`yaml
+function buildFix(serviceName: string, baseImage: string, tag: string | null): string {
+  const exampleTag = tag && tag.toLowerCase() !== 'latest' && !tag.includes('$') ? tag : '<version>';
+  return fixWithYaml(
+    'Pin an explicit version tag and its SHA256 digest. Get the digest with `docker buildx imagetools inspect <image>:<tag>`:',
+    `
 services:
   ${serviceName}:
-    image: ${baseImage}:${cleanTag}@sha256:<digest>
-\`\`\``;
+    image: ${baseImage}:${exampleTag}@sha256:<digest>`,
+  );
 }
 
 export const CMP003: Rule = {
@@ -52,15 +75,15 @@ export const CMP003: Rule = {
   severity: 'medium',
   description:
     'Mutable tags can pull different code on each deploy; pin a version and `@sha256` digest.',
-  fix: buildFix('app'),
+  fix: buildFix('app', 'nginx', '1.27-alpine'),
   references: [
-    {
-      title: 'CIS Docker Benchmark 4.7: Avoid using the :latest tag',
-      url: 'https://www.cisecurity.org/benchmark/docker',
-    },
     {
       title: 'Docker Docs: Pull an image by digest',
       url: 'https://docs.docker.com/reference/cli/docker/image/pull/#pull-an-image-by-digest-immutable-identifier',
+    },
+    {
+      title: 'Docker Docs: Image tags and digests in Compose',
+      url: 'https://docs.docker.com/reference/compose-file/services/#image',
     },
   ],
   check(model: ComposeModel): Finding[] {
@@ -69,13 +92,22 @@ export const CMP003: Rule = {
     for (const service of Object.values(model.services)) {
       if (!service.image) continue;
       const line = service.imageLine ?? service.line;
-      const { hasDigest, baseImage, tag } = extractTag(service.image);
+      const ref = parseImageReference(service.image);
+      // A fully interpolated reference (`image: ${IMAGE}`) cannot be judged statically
+      if (ref.hasDigest || ref.fullyInterpolated) continue;
 
-      if (hasDigest) {
-        continue;
-      }
+      const unpinned =
+        ref.tag === null || (ref.effectiveTag !== null && ref.effectiveTag.toLowerCase() === 'latest');
 
-      if (tag === null || tag.toLowerCase() === 'latest') {
+      if (unpinned) {
+        let message: string;
+        if (ref.tag === null) {
+          message = `Image \`${service.image}\` omits a tag, so Docker pulls \`:latest\`.`;
+        } else if (ref.tag.includes('$')) {
+          message = `Image \`${service.image}\` falls back to \`:latest\` when the variable is unset.`;
+        } else {
+          message = `Image \`${service.image}\` uses the mutable \`:latest\` tag.`;
+        }
         findings.push({
           ruleId: this.id,
           title: 'Image uses :latest',
@@ -83,11 +115,8 @@ export const CMP003: Rule = {
           service: service.name,
           line,
           description: this.description,
-          message:
-            tag === null
-              ? `Image \`${service.image}\` omits a version tag.`
-              : `Image \`${service.image}\` uses the mutable \`:latest\` tag.`,
-          fix: buildFix(service.name, baseImage, '1.0.0'),
+          message,
+          fix: buildFix(service.name, ref.baseImage, null),
           references: this.references,
         });
       } else {
@@ -99,7 +128,7 @@ export const CMP003: Rule = {
           line,
           description: this.description,
           message: `Image \`${service.image}\` is not pinned by an \`@sha256\` digest.`,
-          fix: buildFix(service.name, baseImage, tag),
+          fix: buildFix(service.name, ref.baseImage, ref.effectiveTag),
           references: this.references,
         });
       }

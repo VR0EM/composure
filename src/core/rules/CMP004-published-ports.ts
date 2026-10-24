@@ -1,72 +1,69 @@
-import { ComposeModel, Finding, PortMapping, Rule } from '../types';
+import { ComposeModel, Finding, PortMapping, Rule, Severity } from '../types';
+import { cis, fixWithYaml } from './shared';
 
-const DB_CACHE_PORTS: Record<number, string> = {
-  5432: 'PostgreSQL',
-  3306: 'MySQL / MariaDB',
-  27017: 'MongoDB',
-  6379: 'Redis',
-  9200: 'Elasticsearch / OpenSearch',
-  11211: 'Memcached',
+/** Ports whose services should never face the internet directly. */
+const SENSITIVE_PORTS: Record<number, { label: string; severity: Severity }> = {
+  2375: { label: 'unencrypted Docker daemon API', severity: 'critical' },
+  2376: { label: 'Docker daemon API', severity: 'high' },
+  2379: { label: 'etcd', severity: 'high' },
+  5432: { label: 'PostgreSQL', severity: 'high' },
+  3306: { label: 'MySQL / MariaDB', severity: 'high' },
+  1433: { label: 'Microsoft SQL Server', severity: 'high' },
+  1521: { label: 'Oracle Database', severity: 'high' },
+  27017: { label: 'MongoDB', severity: 'high' },
+  6379: { label: 'Redis', severity: 'high' },
+  11211: { label: 'Memcached', severity: 'high' },
+  9200: { label: 'Elasticsearch / OpenSearch', severity: 'high' },
+  5984: { label: 'CouchDB', severity: 'high' },
+  9042: { label: 'Cassandra', severity: 'high' },
+  8086: { label: 'InfluxDB', severity: 'high' },
+  5672: { label: 'RabbitMQ (AMQP)', severity: 'high' },
+  9092: { label: 'Kafka', severity: 'high' },
+  2181: { label: 'ZooKeeper', severity: 'high' },
+  8500: { label: 'Consul', severity: 'high' },
 };
 
 function isBoundToAllInterfaces(hostIp?: string): boolean {
   if (!hostIp) return true;
-  const trimmed = hostIp.trim();
-  if (
+  const trimmed = hostIp.trim().replace(/^\[|\]$/g, '');
+  return (
     trimmed === '' ||
     trimmed === '0.0.0.0' ||
     trimmed === '::' ||
     trimmed === '*' ||
-    trimmed.includes(':-0.0.0.0}')
-  ) {
-    return true;
-  }
-  return false;
+    /:-(0\.0\.0\.0|::)?\}$/.test(trimmed)
+  );
 }
 
-function matchSensitivePort(
-  portSpec?: string,
-): { port: number; serviceName: string } | null {
+function matchSensitivePort(portSpec?: string): { port: number; label: string; severity: Severity } | null {
   if (!portSpec) return null;
   const trimmed = portSpec.trim();
-
-  const rangeMatch = /^(\d+)-(\d+)$/.exec(trimmed);
-  if (rangeMatch && rangeMatch[1] && rangeMatch[2]) {
-    const start = Number(rangeMatch[1]);
-    const end = Number(rangeMatch[2]);
-    for (const [portStr, label] of Object.entries(DB_CACHE_PORTS)) {
-      const p = Number(portStr);
-      if (p >= start && p <= end) {
-        return { port: p, serviceName: label };
-      }
-    }
-    return null;
-  }
-
-  const num = Number(trimmed);
-  if (!Number.isNaN(num) && DB_CACHE_PORTS[num]) {
-    return { port: num, serviceName: DB_CACHE_PORTS[num]! };
+  const rangeMatch = /^(\d+)(?:-(\d+))?$/.exec(trimmed);
+  if (!rangeMatch) return null;
+  const start = Number(rangeMatch[1]);
+  const end = rangeMatch[2] !== undefined ? Number(rangeMatch[2]) : start;
+  for (const [portStr, info] of Object.entries(SENSITIVE_PORTS)) {
+    const p = Number(portStr);
+    if (p >= start && p <= end) return { port: p, ...info };
   }
   return null;
 }
 
-function findDatabasePort(
-  mapping: PortMapping,
-): { port: number; serviceName: string } | null {
-  return (
-    matchSensitivePort(mapping.target) ?? matchSensitivePort(mapping.published)
-  );
+function loopbackSpec(port: PortMapping): string {
+  const proto = port.protocol !== 'tcp' ? `/${port.protocol}` : '';
+  return `127.0.0.1:${port.published ?? ''}:${port.target}${proto}`;
 }
 
-function buildFix(serviceName: string, published = '8080', target = '80', protocol = 'tcp'): string {
-  const protoSuffix = protocol !== 'tcp' ? `/${protocol}` : '';
-  return `Bind the port to \`127.0.0.1\` or keep traffic on an internal Docker network:
-\`\`\`yaml
+function buildFix(serviceName: string, port?: PortMapping): string {
+  const spec = port ? loopbackSpec(port) : '127.0.0.1:8080:80';
+  return fixWithYaml(
+    'Bind the port to `127.0.0.1` (and put a reverse proxy in front), or drop `ports` and keep the traffic on an internal Docker network:',
+    `
 services:
   ${serviceName}:
     ports:
-      - "127.0.0.1:${published}:${target}${protoSuffix}"
-\`\`\``;
+      - "${spec}"`,
+  );
 }
 
 export const CMP004: Rule = {
@@ -74,13 +71,10 @@ export const CMP004: Rule = {
   title: 'Port bound to 0.0.0.0',
   severity: 'medium',
   description:
-    'Binds to all network interfaces and can bypass host firewalls such as `ufw`.',
+    'Published ports listen on every interface, and Docker\'s iptables rules bypass host firewalls such as `ufw`.',
   fix: buildFix('app'),
   references: [
-    {
-      title: 'CIS Docker Benchmark 5.13: Bind incoming traffic to a specific host interface',
-      url: 'https://www.cisecurity.org/benchmark/docker',
-    },
+    cis('5.14', 'Ensure that incoming container traffic is bound to a specific host interface'),
     {
       title: 'Docker Docs: Packet filtering and firewalls',
       url: 'https://docs.docker.com/engine/network/packet-filtering-firewalls/',
@@ -90,24 +84,33 @@ export const CMP004: Rule = {
     const findings: Finding[] = [];
 
     for (const service of Object.values(model.services)) {
-      for (const port of service.ports) {
-        if (!isBoundToAllInterfaces(port.hostIp)) {
-          continue;
-        }
+      // With host networking, `ports` is ignored (CMP005 covers host networking)
+      if (service.networkMode?.trim() === 'host') continue;
 
-        const pub = port.published ?? port.target;
-        const dbMatch = findDatabasePort(port);
-        if (dbMatch) {
+      service.ports.forEach((port, index) => {
+        if (!isBoundToAllInterfaces(port.hostIp)) return;
+
+        const hostPort = port.published ?? 'a random host port';
+        const sensitive = matchSensitivePort(port.target) ?? matchSensitivePort(port.published);
+        const autofix = {
+          label: 'Bind to 127.0.0.1',
+          operations: [
+            { kind: 'bindPortHostIp' as const, service: service.name, index, hostIp: '127.0.0.1' },
+          ],
+        };
+
+        if (sensitive) {
           findings.push({
             ruleId: this.id,
-            title: 'DB port on 0.0.0.0',
-            severity: 'high',
+            title: sensitive.severity === 'critical' ? 'Docker API published' : 'DB port on 0.0.0.0',
+            severity: sensitive.severity,
             service: service.name,
             line: port.line,
             description: this.description,
-            message: `Publishes ${dbMatch.serviceName} port \`${pub}\` on \`0.0.0.0\`.`,
-            fix: buildFix(service.name, pub, port.target, port.protocol),
+            message: `Publishes the ${sensitive.label} port (\`${port.raw}\`) on all interfaces.`,
+            fix: buildFix(service.name, port),
             references: this.references,
+            autofix,
           });
         } else {
           findings.push({
@@ -117,12 +120,16 @@ export const CMP004: Rule = {
             service: service.name,
             line: port.line,
             description: this.description,
-            message: `Publishes port \`${port.raw}\` on \`0.0.0.0\`.`,
-            fix: buildFix(service.name, pub, port.target, port.protocol),
+            message:
+              port.published === undefined
+                ? `Publishes container port \`${port.target}\` on ${hostPort} on all interfaces.`
+                : `Publishes port \`${port.raw}\` on all interfaces.`,
+            fix: buildFix(service.name, port),
             references: this.references,
+            autofix,
           });
         }
-      }
+      });
     }
 
     return findings;

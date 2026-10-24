@@ -17,12 +17,19 @@ const SEVERITY_SORT_WEIGHT: Record<Severity, number> = {
   info: 1,
 };
 
-const SEVERITY_PENALTY: Record<Severity, number> = {
-  critical: 25,
-  high: 10,
-  medium: 4,
-  low: 1,
+/** Points deducted from a service's score per finding. */
+export const SEVERITY_PENALTY: Record<Severity, number> = {
+  critical: 30,
+  high: 15,
+  medium: 6,
+  low: 2,
   info: 0,
+};
+
+/** Highest score reachable while a finding of this severity is open. */
+export const SEVERITY_SCORE_CAP: Partial<Record<Severity, number>> = {
+  critical: 59, // at best a D
+  high: 74, // at best a C
 };
 
 export type SecurityGrade = 'A' | 'B' | 'C' | 'D' | 'F';
@@ -32,6 +39,16 @@ export interface SecurityScoreSummary {
   grade: SecurityGrade;
   countsBySeverity: Record<Severity, number>;
   totalFindings: number;
+  /** Per-service scores (0-100) used to compute the overall score */
+  serviceScores: Record<string, number>;
+}
+
+export interface SecurityScoreOptions {
+  /**
+   * All service names in the project. Services without findings count as 100.
+   * When omitted, only services that have findings are considered.
+   */
+  services?: string[];
 }
 
 export interface RunRulesOptions {
@@ -89,13 +106,29 @@ export function groupFindingsBySeverity(
   return grouped;
 }
 
+export function gradeForScore(score: number): SecurityGrade {
+  if (score >= 90) return 'A';
+  if (score >= 75) return 'B';
+  if (score >= 60) return 'C';
+  if (score >= 40) return 'D';
+  return 'F';
+}
+
 /**
- * Compute an overall security hardening score (0-100) and letter grade.
- * Penalties: critical -25, high -10, medium -4, low -1, info 0 (minimum 0).
+ * Compute an overall hardening score (0-100) and letter grade.
+ *
+ * Each service starts at 100 and loses points per finding
+ * (critical 30, high 15, medium 6, low 2, info 0). The project score is the
+ * average of the weakest service and the mean of all services, so one bad
+ * service drags the grade down, but adding more well-configured services
+ * does not. Open critical findings cap the score at 59 (D) and high findings
+ * at 74 (C), so a serious issue can never hide behind a good average.
+ *
  * Grades: A >= 90, B >= 75, C >= 60, D >= 40, F < 40.
  */
 export function calculateSecurityScore(
   findings: Finding[],
+  options: SecurityScoreOptions = {},
 ): SecurityScoreSummary {
   const countsBySeverity: Record<Severity, number> = {
     critical: 0,
@@ -105,31 +138,39 @@ export function calculateSecurityScore(
     info: 0,
   };
 
-  let penalty = 0;
+  const penalties = new Map<string, number>();
+  for (const name of options.services ?? []) penalties.set(name, 0);
+
   for (const f of findings) {
     countsBySeverity[f.severity]++;
-    penalty += SEVERITY_PENALTY[f.severity];
+    penalties.set(f.service, (penalties.get(f.service) ?? 0) + SEVERITY_PENALTY[f.severity]);
   }
 
-  const score = Math.max(0, 100 - penalty);
+  const serviceScores: Record<string, number> = {};
+  for (const [name, penalty] of penalties) {
+    serviceScores[name] = Math.max(0, 100 - penalty);
+  }
 
-  let grade: SecurityGrade;
-  if (score >= 90) {
-    grade = 'A';
-  } else if (score >= 75) {
-    grade = 'B';
-  } else if (score >= 60) {
-    grade = 'C';
-  } else if (score >= 40) {
-    grade = 'D';
-  } else {
-    grade = 'F';
+  const scores = Object.values(serviceScores);
+  let score = 100;
+  if (scores.length > 0) {
+    const worst = Math.min(...scores);
+    const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+    score = Math.round((worst + mean) / 2);
+  }
+
+  for (const severity of SEVERITY_ORDER) {
+    const cap = SEVERITY_SCORE_CAP[severity];
+    if (cap !== undefined && countsBySeverity[severity] > 0) {
+      score = Math.min(score, cap);
+    }
   }
 
   return {
     score,
-    grade,
+    grade: gradeForScore(score),
     countsBySeverity,
     totalFindings: findings.length,
+    serviceScores,
   };
 }

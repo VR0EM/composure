@@ -1,4 +1,5 @@
 import { ComposeModel, Finding, Rule } from '../types';
+import { cis } from './shared';
 
 function hasActiveHealthcheck(
   healthcheck: ComposeModel['services'][string]['healthcheck'],
@@ -33,13 +34,10 @@ export const CMP015: Rule = {
   title: 'Healthcheck not set',
   severity: 'low',
   description:
-    'Docker cannot detect hung processes or wait for readiness on startup.',
+    'Docker cannot detect hung processes or wait for readiness on startup. (If the image defines a HEALTHCHECK, this is already covered.)',
   fix: buildFix('api'),
   references: [
-    {
-      title: 'CIS Docker Benchmark 4.6: Add HEALTHCHECK instructions to container images',
-      url: 'https://www.cisecurity.org/benchmark/docker',
-    },
+    cis('5.27', 'Ensure that container health is checked at runtime'),
     {
       title: 'Docker Compose Specification: healthcheck',
       url: 'https://docs.docker.com/reference/compose-file/services/#healthcheck',

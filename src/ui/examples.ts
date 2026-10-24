@@ -75,6 +75,7 @@ x-hardened: &hardened-defaults
       limits:
         memory: 256M
         cpus: "0.50"
+        pids: 200
   logging:
     driver: "json-file"
     options:
@@ -179,6 +180,7 @@ x-service-base: &service-base
       limits:
         memory: 384M
         cpus: "0.50"
+        pids: 256
   logging:
     driver: "json-file"
     options:

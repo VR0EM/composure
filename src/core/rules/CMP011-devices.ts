@@ -1,17 +1,30 @@
-import { ComposeModel, Finding, Rule } from '../types';
+import { ComposeModel, Finding, Rule, Severity } from '../types';
+import { cis, fixWithYaml } from './shared';
 
-function buildFix(
-  serviceName: string,
-  source = '/dev/ttyUSB0',
-  target = '/dev/ttyUSB0',
-): string {
-  return `Remove unnecessary device mappings or restrict permissions to read-only (\`:r\`):
-\`\`\`yaml
+/** Devices that give raw access to host memory or disks. */
+function classifyDevice(source: string): { severity: Severity; reason: string } {
+  const path = source.trim();
+  if (path === '/dev' || path === '/dev/') {
+    return { severity: 'critical', reason: 'exposes every host device' };
+  }
+  if (/^\/dev\/(mem|kmem|port)$/.test(path)) {
+    return { severity: 'high', reason: 'gives raw access to host memory' };
+  }
+  if (/^\/dev\/(sd[a-z]+|nvme\d+(n\d+)?(p\d+)?|vd[a-z]+|xvd[a-z]+|hd[a-z]+|mmcblk\d+(p\d+)?|dm-\d+|loop\d+|mapper\/.+|md\d+)\d*$/.test(path)) {
+    return { severity: 'high', reason: 'gives raw access to a host disk' };
+  }
+  return { severity: 'medium', reason: 'grants direct access to host hardware' };
+}
+
+function buildFix(serviceName: string, source: string, target: string): string {
+  return fixWithYaml(
+    'Remove device mappings the service does not need, and restrict the rest to the minimum cgroup permissions (for example read-only `r`):',
+    `
 services:
   ${serviceName}:
     devices:
-      - "${source}:${target}:r"
-\`\`\``;
+      - "${source}:${target}:r"`,
+  );
 }
 
 export const CMP011: Rule = {
@@ -20,31 +33,25 @@ export const CMP011: Rule = {
   severity: 'medium',
   description:
     'Grants direct container access to host hardware device nodes.',
-  fix: buildFix('app'),
+  fix: buildFix('app', '/dev/ttyUSB0', '/dev/ttyUSB0'),
   references: [
-    {
-      title: 'CIS Docker Benchmark 5.6: Do not expose host devices directly to containers',
-      url: 'https://www.cisecurity.org/benchmark/docker',
-    },
+    cis('5.18', 'Ensure that host devices are not directly exposed to containers'),
   ],
   check(model: ComposeModel): Finding[] {
     const findings: Finding[] = [];
 
     for (const service of Object.values(model.services)) {
       for (const device of service.devices) {
+        const { severity, reason } = classifyDevice(device.source);
         findings.push({
           ruleId: this.id,
           title: this.title,
-          severity: this.severity,
+          severity,
           service: service.name,
           line: device.line,
           description: this.description,
-          message: `Maps host device \`${device.raw}\`.`,
-          fix: buildFix(
-            service.name,
-            device.source,
-            device.target ?? device.source,
-          ),
+          message: `Maps host device \`${device.raw}\`, which ${reason}.`,
+          fix: buildFix(service.name, device.source, device.target ?? device.source),
           references: this.references,
         });
       }

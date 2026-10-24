@@ -1,12 +1,15 @@
 export * from './types';
 export * from './parser';
 export * from './normalizer';
+export * from './validator';
+export * from './composeSchema';
 export * from './graph';
 export * from './rules';
 export * from './ruleEngine';
+export * from './suppressions';
+export * from './analyze';
 export * from './share';
 export * from './report';
-export * from './applyFix';
-
-
-
+export * from './autofix';
+export * from './sarif';
+export * from './textDiff';
