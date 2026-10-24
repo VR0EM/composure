@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <rect width="32" height="32" rx="7" fill="#141414"/>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="6.5" stroke="#2a2a2a"/>
+  <!-- Docker Compose Modular Stack -->
+  <rect x="5" y="5" width="10" height="10" rx="2" fill="#2dd4bf"/>
+  <rect x="17" y="5" width="10" height="10" rx="2" fill="#2dd4bf" fill-opacity="0.75"/>
+  <rect x="5" y="17" width="10" height="10" rx="2" fill="#2dd4bf" fill-opacity="0.75"/>
+  <rect x="17" y="17" width="10" height="10" rx="2" fill="#2dd4bf" fill-opacity="0.35"/>
+</svg>

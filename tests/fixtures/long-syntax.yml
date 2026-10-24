@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile.prod
+    image: custom/gateway:2.1.0
+    profiles:
+      - edge
+      - debug
+    ports:
+      - target: 8080
+        published: "80"
+        host_ip: 127.0.0.1
+        protocol: tcp
+        mode: host
+      - target: 5353
+        published: 5353
+        protocol: udp
+    volumes:
+      - type: bind
+        source: ./certs
+        target: /etc/certs
+        read_only: true
+      - type: volume
+        source: gateway_state
+        target: /var/lib/gateway
+        read_only: false
+      - type: tmpfs
+        target: /run/gateway
+    networks:
+      dmz:
+        aliases:
+          - ingress.local
+        ipv4_address: 172.20.0.10
+    environment:
+      LOG_LEVEL: info
+      WORKERS: 4
+      FEATURE_X: true
+      OPTIONAL_KEY: null
+    depends_on:
+      auth:
+        condition: service_healthy
+        restart: true
+        required: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.50"
+
+  auth:
+    image: custom/auth:1.0.0
+    networks:
+      dmz: null
+
+networks:
+  dmz:
+    driver: bridge
+    internal: true
+
+volumes:
+  gateway_state:
+    driver: local
+    external: true

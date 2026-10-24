@@ -1,0 +1,217 @@
+@import "tailwindcss";
+
+/* Typography: one family (Geist) for UI and wordmark, Geist Mono for YAML, image tags, ports and paths */
+@theme {
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+:root,
+[data-theme="dark"] {
+  /* Base surfaces & borders */
+  --bg-app: #121212;
+  --bg-panel: #181818;
+  --bg-elevated: #202020;
+  --bg-subtle: #282828;
+  --border-subtle: #262626;
+  --border-strong: #383838;
+  --border-hover: #6e6e6e;
+  --node-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.25);
+
+  /* Text hierarchy (all >= 4.5:1 on surfaces) */
+  --text-primary: #f5f5f5;
+  --text-secondary: #a3a3a3;
+  --text-muted: #8f8f8f;
+
+  /* Single teal accent (active tabs, selected node, focus, primary button, links) */
+  --accent: #2dd4bf;
+  --accent-bg: #1a2725;
+  --accent-fg: #0c1715;
+
+  /* Severity roles */
+  --sev-critical-fg: #f87171;
+  --sev-critical-border: #ef4444;
+  --sev-critical-group-bg: #291c1c;
+  --sev-critical-chip-bg: #381f1f;
+
+  --sev-high-fg: #fb923c;
+  --sev-high-border: #f97316;
+  --sev-high-group-bg: #2a1f18;
+  --sev-high-chip-bg: #3a2618;
+
+  --sev-medium-fg: #fbbf24;
+  --sev-medium-border: #f59e0b;
+  --sev-medium-group-bg: #2a2317;
+  --sev-medium-chip-bg: #392c16;
+
+  --sev-low-fg: #60a5fa;
+  --sev-low-border: #3b82f6;
+  --sev-low-group-bg: #1b202a;
+  --sev-low-chip-bg: #1d2839;
+
+  --sev-info-fg: #a3a3a3;
+  --sev-info-border: #737373;
+  --sev-info-group-bg: #1f1f1f;
+  --sev-info-chip-bg: #262626;
+
+  /* Diagram node & edge type roles (~8% tinted fill on #181818, 1px border, matching edge hue) */
+  --node-service-bg: #181818;
+  --node-service-border: #383838;
+  --edge-depends: #8f8f8f;
+
+  --node-network-bg: #23212a;
+  --node-network-border: #a78bfa;
+  --node-network-fg: #c4b5fd;
+
+  --node-volume-bg: #1a2722;
+  --node-volume-border: #34d399;
+  --node-volume-fg: #6ee7b7;
+
+  --node-bind-bg: #272521;
+  --node-bind-border: #d6b88a;
+  --node-bind-fg: #e5ceb0;
+
+  --node-port-bg: #2a1f25;
+  --node-port-border: #f472b6;
+  --node-port-fg: #f9a8d4;
+
+  --canvas-dot: #282828;
+
+  /* Editor tokens */
+  --editor-selection: #2a3836;
+  --editor-line-highlight: #1f2e2c;
+  --syntax-key: #e5e5e5;
+  --syntax-string: #6ee7b7;
+  --syntax-number: #fbbf24;
+  --syntax-comment: #8f8f8f;
+  --syntax-anchor: #c4b5fd;
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  /* Base surfaces & borders */
+  --bg-app: #f5f5f5;
+  --bg-panel: #ffffff;
+  --bg-elevated: #ededed;
+  --bg-subtle: #e5e5e5;
+  --border-subtle: #e5e5e5;
+  --border-strong: #cccccc;
+  --border-hover: #858585;
+  --node-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 4px 12px rgb(0 0 0 / 0.05);
+
+  /* Text hierarchy (all >= 4.5:1 on surfaces) */
+  --text-primary: #171717;
+  --text-secondary: #525252;
+  --text-muted: #5c5c5c;
+
+  /* Single teal accent (darkened for >= 4.5:1 contrast on light surfaces) */
+  --accent: #0b645d;
+  --accent-bg: #e2ecec;
+  --accent-fg: #ffffff;
+
+  /* Severity roles (all darkened for >= 4.5:1 contrast on light surfaces & tinted chips) */
+  --sev-critical-fg: #991b1b;
+  --sev-critical-border: #dc2626;
+  --sev-critical-group-bg: #faefef;
+  --sev-critical-chip-bg: #f7e4e4;
+
+  --sev-high-fg: #9a3412;
+  --sev-high-border: #ea580c;
+  --sev-high-group-bg: #fbf2ee;
+  --sev-high-chip-bg: #f8e8e2;
+
+  --sev-medium-fg: #92400e;
+  --sev-medium-border: #d97706;
+  --sev-medium-group-bg: #faf3ee;
+  --sev-medium-chip-bg: #f6eae1;
+
+  --sev-low-fg: #1e40af;
+  --sev-low-border: #2563eb;
+  --sev-low-group-bg: #eff3fc;
+  --sev-low-chip-bg: #e4eafa;
+
+  --sev-info-fg: #525252;
+  --sev-info-border: #737373;
+  --sev-info-group-bg: #f3f3f3;
+  --sev-info-chip-bg: #eaeaea;
+
+  /* Diagram node & edge type roles (~7-8% tinted fill on #ffffff, 1px border, matching edge hue) */
+  --node-service-bg: #ffffff;
+  --node-service-border: #cccccc;
+  --edge-depends: #666666;
+
+  --node-network-bg: #f5f0fc;
+  --node-network-border: #6d28d9;
+  --node-network-fg: #5b21b6;
+
+  --node-volume-bg: #edf6f3;
+  --node-volume-border: #047857;
+  --node-volume-fg: #065f46;
+
+  --node-bind-bg: #f6f2ef;
+  --node-bind-border: #8c6239;
+  --node-bind-fg: #6b4c2b;
+
+  --node-port-bg: #faeff4;
+  --node-port-border: #be185d;
+  --node-port-fg: #9d174d;
+
+  --canvas-dot: #d4d4d4;
+
+  /* Editor tokens */
+  --editor-selection: #d5e8e6;
+  --editor-line-highlight: #e6f2f1;
+  --syntax-key: #171717;
+  --syntax-string: #065f46;
+  --syntax-number: #92400e;
+  --syntax-comment: #5c5c5c;
+  --syntax-anchor: #5b21b6;
+
+  color-scheme: light;
+}
+
+body {
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Diagram focus: dim everything not connected to the selected or hovered node */
+.react-flow__node.is-dimmed {
+  opacity: 0.35;
+}
+
+.react-flow__edge.is-dimmed {
+  opacity: 0.18;
+}
+
+.react-flow__node,
+.react-flow__edge {
+  transition: opacity 120ms ease;
+}
+
+.react-flow__node:focus-visible {
+  outline: none;
+}

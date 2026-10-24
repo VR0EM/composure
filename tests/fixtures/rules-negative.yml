@@ -1,0 +1,38 @@
+services:
+  hardened-api:
+    image: nginx:1.27.3-alpine@sha256:4ff102c5d78d254a6f0da062b3cf39eaf07f01eec0927fd21e219d0af8bc0591
+    privileged: false
+    user: "1000:1000"
+    read_only: true
+    ports:
+      - "127.0.0.1:8080:80"
+      - "127.0.0.1:5432:5432"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - app_data:/var/lib/app:ro
+      - ./public:/usr/share/nginx/html:ro
+    tmpfs:
+      - /tmp
+      - /var/run
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      API_KEY: ${API_KEY}
+      SECRET_TOKEN_FILE: /run/secrets/api_token
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.50"
+
+volumes:
+  app_data:

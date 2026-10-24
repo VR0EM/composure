@@ -1,0 +1,28 @@
+x-base-service: &base-service
+  user: "1000:1000"
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+
+x-resource-defaults: &resource-defaults
+  mem_limit: 256m
+  cpus: "0.25"
+  user: "2000:2000"
+
+x-common-env: &common-env
+  TZ: ${TZ:-UTC}
+  LOG_FORMAT: json
+
+services:
+  worker:
+    <<: [*base-service, *resource-defaults]
+    image: ghcr.io/org/worker:${APP_TAG:-1.4.2}
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${HOST_PORT:-9000}:9000"
+    volumes:
+      - "${DATA_DIR:-./data}:/data:ro"
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgres://${DB_USER:-app}:${DB_PASS}@db:5432/app
+    x-custom-metadata:
+      owner: platform-team

@@ -1,0 +1,32 @@
+services:
+  host-monitor:
+    image: prom/node-exporter:latest
+    network_mode: host
+    pid: host
+    ipc: host
+    userns_mode: host
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    cap_drop:
+      - ALL
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0:rwm"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+
+  isolated-job:
+    image: alpine:3.20
+    network_mode: none
+
+  sidecar:
+    image: busybox:1.36
+    network_mode: "service:host-monitor"
+
+  ext-attached:
+    image: busybox:1.36
+    network_mode: "container:external-proxy"
