@@ -20,6 +20,7 @@ import { CMP018 } from './CMP018-default-bridge-network';
 import { CMP019 } from './CMP019-database-no-auth';
 import { CMP020 } from './CMP020-pids-limit';
 import { CMP021 } from './CMP021-mount-propagation';
+import { CMP022 } from './CMP022-restart-policy';
 
 export {
   CMP001,
@@ -43,6 +44,7 @@ export {
   CMP019,
   CMP020,
   CMP021,
+  CMP022,
 };
 
 export const ALL_RULES: Rule[] = [
@@ -67,4 +69,7 @@ export const ALL_RULES: Rule[] = [
   CMP019,
   CMP020,
   CMP021,
+  CMP022,
 ];
+
+export const RULES_BY_ID: ReadonlyMap<string, Rule> = new Map(ALL_RULES.map((r) => [r.id, r]));

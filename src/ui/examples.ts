@@ -65,6 +65,7 @@ export const HARDENED_COMPOSE_YAML = `name: hardened-zero-trust-stack
 
 x-hardened: &hardened-defaults
   privileged: false
+  restart: unless-stopped
   read_only: true
   cap_drop:
     - ALL
@@ -170,6 +171,7 @@ export const MICROSERVICES_COMPOSE_YAML = `name: microservices-observability
 
 x-service-base: &service-base
   user: "1000:1000"
+  restart: unless-stopped
   read_only: true
   cap_drop:
     - ALL

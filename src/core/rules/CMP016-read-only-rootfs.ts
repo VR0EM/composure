@@ -16,6 +16,7 @@ export const CMP016: Rule = {
   id: 'CMP016',
   title: 'Writable root filesystem',
   severity: 'info',
+  category: 'isolation',
   description:
     'Setting `read_only: true` prevents processes from modifying container binaries.',
   fix: buildFix('app'),
@@ -44,12 +45,14 @@ export const CMP016: Rule = {
           autofix: service.volumes.some((v) => v.target.replace(/\/+$/, '') === '/tmp')
             ? {
                 label: 'Set read_only: true',
+                caution: 'Paths the app writes to need a tmpfs or volume mount.',
                 operations: [
                   { kind: 'setScalar', service: service.name, key: 'read_only', value: true },
                 ],
               }
             : {
                 label: 'Set read_only: true + tmpfs /tmp',
+                caution: 'Paths the app writes to (besides /tmp) need a tmpfs or volume mount.',
                 operations: [
                   { kind: 'setScalar', service: service.name, key: 'read_only', value: true },
                   {

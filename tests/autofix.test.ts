@@ -3,8 +3,10 @@ import {
   Finding,
   analyzeCompose,
   applyAutofix,
+  applyAutofixes,
   applyFindingFix,
   applyFixOperation,
+  findingKey,
   formatScalar,
 } from '../src/core';
 import { COMPOSE_EXAMPLES } from '../src/ui/examples';
@@ -231,5 +233,39 @@ describe('formatScalar', () => {
     expect(formatScalar('no-new-privileges:true')).toBe('no-new-privileges:true');
     expect(formatScalar('a #b')).toBe('"a #b"');
     expect(formatScalar(true)).toBe('true');
+  });
+});
+
+describe('applyAutofixes (fix all)', () => {
+  it('applies every fixable finding without breaking the file', () => {
+    const insecure = COMPOSE_EXAMPLES.find((e) => e.id === 'deliberately-insecure')!.yaml;
+    const before = analyzeCompose(insecure);
+    const result = applyAutofixes(insecure);
+    const after = analyzeCompose(result.text);
+    if (!before.ok || !after.ok) throw new Error('parse');
+    expect(result.applied.length).toBeGreaterThan(20);
+    expect(result.skipped).toEqual([]);
+    expect(after.findings.filter((f) => f.autofix)).toEqual([]);
+    expect(after.diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
+    expect(after.score.score).toBeGreaterThan(before.score.score);
+    // Findings that need a human decision stay
+    expect(after.findings.some((f) => f.ruleId === 'CMP002')).toBe(true);
+  });
+
+  it('only applies the selected fixes', () => {
+    const yaml = 'services:\n  web:\n    image: nginx:1.27\n    ports:\n      - "8080:80"\n';
+    const before = analyzeCompose(yaml);
+    if (!before.ok) throw new Error('parse');
+    const port = before.findings.find((f) => f.ruleId === 'CMP004')!;
+    const result = applyAutofixes(yaml, { selected: new Set([findingKey(port)]) });
+    expect(result.applied.map((f) => f.ruleId)).toEqual(['CMP004']);
+    expect(result.text).toBe(yaml.replace('"8080:80"', '"127.0.0.1:8080:80"'));
+  });
+
+  it('respects muted rules', () => {
+    const yaml = 'services:\n  web:\n    image: nginx:1.27\n';
+    const result = applyAutofixes(yaml, { disabledRuleIds: ['CMP007', 'CMP009', 'CMP016', 'CMP017', 'CMP022'] });
+    expect(result.applied).toEqual([]);
+    expect(result.text).toBe(yaml);
   });
 });

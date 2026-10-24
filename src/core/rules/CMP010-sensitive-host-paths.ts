@@ -84,6 +84,7 @@ export const CMP010: Rule = {
   id: 'CMP010',
   title: 'Sensitive host mount',
   severity: 'critical',
+  category: 'isolation',
   description:
     'Exposes host credentials, system configuration, or runtime files.',
   fix: buildFix('app', '/etc/app/app.conf'),

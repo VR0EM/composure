@@ -28,6 +28,7 @@ export const CMP018: Rule = {
   id: 'CMP018',
   title: 'Default bridge network',
   severity: 'medium',
+  category: 'network',
   description:
     'The legacy `docker0` bridge is shared by all standalone containers on the host and has no service-name DNS.',
   fix: buildFix('app'),

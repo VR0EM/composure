@@ -309,7 +309,18 @@ export interface Autofix {
   /** Short, imperative description shown on the button, e.g. "Bind to 127.0.0.1" */
   label: string;
   operations: FixOperation[];
+  /** What to double-check after applying, when the fix can change behavior */
+  caution?: string;
 }
+
+/** Areas a rule belongs to, used for the score breakdown. */
+export type RuleCategory =
+  | 'privileges'
+  | 'isolation'
+  | 'network'
+  | 'secrets'
+  | 'images'
+  | 'reliability';
 
 export interface Finding {
   ruleId: string;
@@ -330,6 +341,7 @@ export interface Rule {
   id: string;
   title: string;
   severity: Severity;
+  category: RuleCategory;
   description: string;
   fix: string;
   references: RuleReference[];

@@ -1576,7 +1576,7 @@ export function normalizeComposeDocument(
       scalarToString(resolveAstNode(sFields.get('cgroup')?.value, doc)) ?? undefined;
     const cgroupLine = sFields.has('cgroup') ? fieldLines['cgroup'] : undefined;
 
-    const restart =
+    let restart =
       scalarToString(resolveAstNode(sFields.get('restart')?.value, doc)) ?? undefined;
 
     // pids_limit (service level) or deploy.resources.limits.pids
@@ -1593,6 +1593,13 @@ export function normalizeComposeDocument(
         toPositiveInt(
           scalarToString(resolveAstNode(deployFields.get('replicas')?.value, doc)),
         ) ?? replicas;
+      const restartPolicy = resolveAstNode(deployFields.get('restart_policy')?.value, doc);
+      if (restart === undefined && isMap(restartPolicy)) {
+        restart =
+          scalarToString(
+            resolveAstNode(getMapFieldMap(restartPolicy, doc).get('condition')?.value, doc),
+          ) ?? 'any';
+      }
       const resources = resolveAstNode(deployFields.get('resources')?.value, doc);
       if (isMap(resources)) {
         const limits = resolveAstNode(

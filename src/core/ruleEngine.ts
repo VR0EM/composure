@@ -1,5 +1,6 @@
-import { ALL_RULES } from './rules';
-import { ComposeModel, Finding, Rule, Severity } from './types';
+import { CATEGORY_ORDER } from './categories';
+import { ALL_RULES, RULES_BY_ID } from './rules';
+import { ComposeModel, Finding, Rule, RuleCategory, Severity } from './types';
 
 export const SEVERITY_ORDER: Severity[] = [
   'critical',
@@ -34,6 +35,12 @@ export const SEVERITY_SCORE_CAP: Partial<Record<Severity, number>> = {
 
 export type SecurityGrade = 'A' | 'B' | 'C' | 'D' | 'F';
 
+export interface CategoryScore {
+  score: number;
+  findings: number;
+  worst: Severity | 'none';
+}
+
 export interface SecurityScoreSummary {
   score: number;
   grade: SecurityGrade;
@@ -41,6 +48,8 @@ export interface SecurityScoreSummary {
   totalFindings: number;
   /** Per-service scores (0-100) used to compute the overall score */
   serviceScores: Record<string, number>;
+  /** The same scoring applied to each rule category on its own */
+  categoryScores: Record<RuleCategory, CategoryScore>;
 }
 
 export interface SecurityScoreOptions {
@@ -151,13 +160,7 @@ export function calculateSecurityScore(
     serviceScores[name] = Math.max(0, 100 - penalty);
   }
 
-  const scores = Object.values(serviceScores);
-  let score = 100;
-  if (scores.length > 0) {
-    const worst = Math.min(...scores);
-    const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-    score = Math.round((worst + mean) / 2);
-  }
+  let score = combineServiceScores(Object.values(serviceScores));
 
   for (const severity of SEVERITY_ORDER) {
     const cap = SEVERITY_SCORE_CAP[severity];
@@ -166,11 +169,43 @@ export function calculateSecurityScore(
     }
   }
 
+  // Category breakdown: same per-service model, restricted to one category
+  const serviceNames = Array.from(penalties.keys());
+  const categoryScores = {} as Record<RuleCategory, CategoryScore>;
+  for (const category of CATEGORY_ORDER) {
+    const inCategory = findings.filter((f) => RULES_BY_ID.get(f.ruleId)?.category === category);
+    const perService = new Map<string, number>(serviceNames.map((n) => [n, 0]));
+    let worstRank = 0;
+    let worst: Severity | 'none' = 'none';
+    for (const f of inCategory) {
+      perService.set(f.service, (perService.get(f.service) ?? 0) + SEVERITY_PENALTY[f.severity]);
+      const rank = SEVERITY_ORDER.length - SEVERITY_ORDER.indexOf(f.severity);
+      if (rank > worstRank) {
+        worstRank = rank;
+        worst = f.severity;
+      }
+    }
+    categoryScores[category] = {
+      score: combineServiceScores(Array.from(perService.values()).map((p) => Math.max(0, 100 - p))),
+      findings: inCategory.length,
+      worst,
+    };
+  }
+
   return {
     score,
     grade: gradeForScore(score),
     countsBySeverity,
     totalFindings: findings.length,
     serviceScores,
+    categoryScores,
   };
+}
+
+/** Average of the weakest service and the mean of all services (100 when empty). */
+function combineServiceScores(scores: number[]): number {
+  if (scores.length === 0) return 100;
+  const worst = Math.min(...scores);
+  const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+  return Math.round((worst + mean) / 2);
 }

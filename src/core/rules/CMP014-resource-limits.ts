@@ -18,6 +18,7 @@ export const CMP014: Rule = {
   id: 'CMP014',
   title: 'No resource limits',
   severity: 'low',
+  category: 'reliability',
   description:
     'Unbounded containers can exhaust host memory or CPU and starve other services.',
   fix: buildFix('app'),

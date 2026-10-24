@@ -15,6 +15,7 @@ import {
 import { getEffectiveMapPairs, parseShortPort, resolveAstNode, scalarToString } from './normalizer';
 import { normalizeCapability } from './rules/CMP006-cap-add';
 import { normalizeSecurityOpt } from './rules/CMP008-security-opt-unconfined';
+import { AnalyzeOptions, analyzeCompose } from './analyze';
 import { Autofix, Finding, FixOperation, ListCompareMode } from './types';
 
 /**
@@ -579,4 +580,59 @@ export function applyAutofix(yamlText: string, autofix: Autofix): string | null 
 export function applyFindingFix(yamlText: string, finding: Finding): string | null {
   if (!finding.autofix) return null;
   return applyAutofix(yamlText, finding.autofix);
+}
+
+/* ------------------------------------------------------------------ */
+/* Fix all                                                             */
+/* ------------------------------------------------------------------ */
+
+/** Stable identity of a finding across re-analysis (line numbers shift as fixes land). */
+export function findingKey(finding: Finding): string {
+  return `${finding.ruleId}|${finding.service}|${finding.message}`;
+}
+
+export interface BulkFixResult {
+  text: string;
+  applied: Finding[];
+  /** Selected findings whose fix could not be applied safely */
+  skipped: Finding[];
+}
+
+/**
+ * Apply many autofixes at once. Fixes are applied one at a time with a fresh
+ * analysis in between, because each edit shifts lines and list indexes.
+ * Only findings whose key is in `selected` are fixed (all fixable ones when
+ * `selected` is omitted).
+ */
+export function applyAutofixes(
+  yamlText: string,
+  options: AnalyzeOptions & { selected?: ReadonlySet<string> } = {},
+): BulkFixResult {
+  let text = yamlText;
+  const applied: Finding[] = [];
+  const done = new Set<string>();
+  const skipped = new Map<string, Finding>();
+
+  for (let guard = 0; guard < 500; guard++) {
+    const result = analyzeCompose(text, options);
+    if (!result.ok) break;
+    const next = result.findings.find((f) => {
+      if (!f.autofix) return false;
+      const key = findingKey(f);
+      if (done.has(key) || skipped.has(key)) return false;
+      return !options.selected || options.selected.has(key);
+    });
+    if (!next) break;
+    const key = findingKey(next);
+    const fixed = applyFindingFix(text, next);
+    if (fixed === null || fixed === text) {
+      skipped.set(key, next);
+      continue;
+    }
+    text = fixed;
+    done.add(key);
+    applied.push(next);
+  }
+
+  return { text, applied, skipped: Array.from(skipped.values()) };
 }

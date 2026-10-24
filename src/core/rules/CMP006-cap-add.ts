@@ -40,6 +40,7 @@ export const CMP006: Rule = {
   id: 'CMP006',
   title: 'Dangerous capability',
   severity: 'high',
+  category: 'privileges',
   description:
     'Broad kernel capabilities weaken isolation and can allow host escape.',
   fix: buildFix('app', 'SYS_ADMIN'),
@@ -70,6 +71,7 @@ export const CMP006: Rule = {
           references: this.references,
           autofix: {
             label: `Remove ${capEntry.value}`,
+            caution: 'Only if the service works without it; some tools (VPNs, packet capture) genuinely need it.',
             operations: [
               {
                 kind: 'removeListItem',

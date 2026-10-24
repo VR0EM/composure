@@ -21,6 +21,7 @@ import {
   CMP016,
   CMP017,
   CMP018,
+  CATEGORY_ORDER,
   ComposeModel,
   Finding,
   calculateSecurityScore,
@@ -40,15 +41,16 @@ function loadModel(fixtureName: string): ComposeModel {
   return parsed.model;
 }
 
-describe('Hardening Rules (CMP001 - CMP021)', () => {
+describe('Hardening Rules (CMP001 - CMP022)', () => {
   const positiveModel = loadModel('rules-positive.yml');
   const negativeModel = loadModel('rules-negative.yml');
 
-  it('exports all 21 rules with required metadata (id, title, severity, description, fix, references)', () => {
-    expect(ALL_RULES).toHaveLength(21);
-    expect(new Set(ALL_RULES.map((r) => r.id)).size).toBe(21);
+  it('exports all 22 rules with required metadata (id, title, severity, category, description, fix, references)', () => {
+    expect(ALL_RULES).toHaveLength(22);
+    expect(new Set(ALL_RULES.map((r) => r.id)).size).toBe(22);
     for (const rule of ALL_RULES) {
-      expect(rule.id).toMatch(/^CMP0(0[1-9]|1[0-9]|2[01])$/);
+      expect(rule.id).toMatch(/^CMP0(0[1-9]|1[0-9]|2[0-2])$/);
+      expect(CATEGORY_ORDER).toContain(rule.category);
       expect(rule.title.length).toBeGreaterThan(3);
       expect(rule.title.length).toBeLessThanOrEqual(26);
       expect(rule.description.length).toBeGreaterThan(10);
@@ -369,6 +371,21 @@ describe('Security score', () => {
     const high = calculateSecurityScore([fakeFinding('high', 'a')], { services: ['a', 'b', 'c'] });
     expect(high.score).toBe(74);
     expect(high.grade).toBe('C');
+  });
+
+  it('breaks the score down by rule category', () => {
+    const score = calculateSecurityScore(
+      [
+        { ...fakeFinding('critical', 'web'), ruleId: 'CMP001' },
+        { ...fakeFinding('medium', 'web'), ruleId: 'CMP004' },
+      ],
+      { services: ['web', 'db'] },
+    );
+    expect(score.categoryScores.privileges).toMatchObject({ findings: 1, worst: 'critical' });
+    // web 70, db 100 -> (70 + 85) / 2 = 78 (rounded)
+    expect(score.categoryScores.privileges.score).toBe(78);
+    expect(score.categoryScores.network).toMatchObject({ findings: 1, worst: 'medium', score: 96 });
+    expect(score.categoryScores.secrets).toMatchObject({ findings: 0, worst: 'none', score: 100 });
   });
 
   it('scores an empty finding list as a perfect 100', () => {

@@ -30,6 +30,7 @@ export const CMP017: Rule = {
   id: 'CMP017',
   title: 'Uncapped container logging',
   severity: 'low',
+  category: 'reliability',
   description:
     'The default `json-file` log driver never rotates, so a chatty container can fill the host disk.',
   fix: buildFix('app'),

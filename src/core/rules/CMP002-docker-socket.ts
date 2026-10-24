@@ -49,6 +49,7 @@ export const CMP002: Rule = {
   id: 'CMP002',
   title: 'Docker socket mounted',
   severity: 'critical',
+  category: 'isolation',
   description:
     'A container runtime socket gives full control over the host, equivalent to root.',
   fix: buildFix('app'),

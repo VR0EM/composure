@@ -31,6 +31,7 @@ export const CMP011: Rule = {
   id: 'CMP011',
   title: 'Host device mapped',
   severity: 'medium',
+  category: 'isolation',
   description:
     'Grants direct container access to host hardware device nodes.',
   fix: buildFix('app', '/dev/ttyUSB0', '/dev/ttyUSB0'),

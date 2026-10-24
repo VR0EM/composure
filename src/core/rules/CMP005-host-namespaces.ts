@@ -90,6 +90,7 @@ export const CMP005: Rule = {
   id: 'CMP005',
   title: 'Host namespace shared',
   severity: 'high',
+  category: 'isolation',
   description:
     'Disables namespace isolation between the container and the host.',
   fix: buildFix('app', 'network_mode'),
@@ -121,6 +122,7 @@ export const CMP005: Rule = {
             ? {
                 autofix: {
                   label: `Remove ${ns.field}: host`,
+                  caution: 'Monitoring or system tools that inspect the host may stop working.',
                   operations: [{ kind: 'removeKey' as const, service: service.name, key: ns.field }],
                 },
               }

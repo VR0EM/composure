@@ -18,6 +18,7 @@ export const CMP020: Rule = {
   id: 'CMP020',
   title: 'No PIDs limit',
   severity: 'info',
+  category: 'reliability',
   description:
     'Without a PIDs limit, a fork bomb or thread leak in one container can exhaust the process table of the whole host.',
   fix: buildFix('app'),

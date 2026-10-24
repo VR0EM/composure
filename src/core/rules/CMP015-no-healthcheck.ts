@@ -33,6 +33,7 @@ export const CMP015: Rule = {
   id: 'CMP015',
   title: 'Healthcheck not set',
   severity: 'low',
+  category: 'reliability',
   description:
     'Docker cannot detect hung processes or wait for readiness on startup. (If the image defines a HEALTHCHECK, this is already covered.)',
   fix: buildFix('api'),
