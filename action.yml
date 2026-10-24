@@ -1,0 +1,68 @@
+name: Composure
+description: Check Docker Compose files for security hardening issues and Compose mistakes, with SARIF output for code scanning.
+author: VR0EM
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  files:
+    description: Space-separated Compose files to check. Defaults to compose.yaml / docker-compose.yml in the working directory.
+    required: false
+    default: ''
+  fail-on:
+    description: Fail when a finding is at least this severe (critical, high, medium, low, info, none).
+    required: false
+    default: high
+  disable:
+    description: Comma-separated rule IDs to skip, e.g. CMP007,CMP016.
+    required: false
+    default: ''
+  sarif-file:
+    description: Where to write the SARIF report (upload it with github/codeql-action/upload-sarif).
+    required: false
+    default: composure.sarif
+  fail-on-problems:
+    description: Fail on Compose errors such as undefined networks or volumes ("true" or "false").
+    required: false
+    default: 'true'
+
+outputs:
+  sarif-file:
+    description: Path of the SARIF report.
+    value: ${{ steps.run.outputs.sarif-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Build Composure CLI
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        npm ci --no-audit --no-fund --loglevel=error
+        npm run build:cli --silent
+
+    - name: Run Composure
+      id: run
+      shell: bash
+      # Inputs go through environment variables, never straight into the script,
+      # so file names or rule lists cannot inject shell commands.
+      env:
+        COMPOSURE_BIN: ${{ github.action_path }}/dist-cli/composure.mjs
+        INPUT_FILES: ${{ inputs.files }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_DISABLE: ${{ inputs.disable }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+        INPUT_FAIL_ON_PROBLEMS: ${{ inputs.fail-on-problems }}
+      run: |
+        args=(--format sarif --output "$INPUT_SARIF_FILE" --fail-on "$INPUT_FAIL_ON")
+        if [ -n "$INPUT_DISABLE" ]; then args+=(--disable "$INPUT_DISABLE"); fi
+        if [ "$INPUT_FAIL_ON_PROBLEMS" = "false" ]; then args+=(--no-fail-on-problems); fi
+        read -r -a files <<< "$INPUT_FILES"
+        echo "sarif-file=$INPUT_SARIF_FILE" >> "$GITHUB_OUTPUT"
+        node "$COMPOSURE_BIN" "${args[@]}" "${files[@]}"
