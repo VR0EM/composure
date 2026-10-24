@@ -22,7 +22,7 @@ import {
   CMP017,
   CMP018,
   ComposeModel,
-  applyFindingFix,
+  Finding,
   calculateSecurityScore,
   groupFindingsBySeverity,
   parseCompose,
@@ -40,14 +40,15 @@ function loadModel(fixtureName: string): ComposeModel {
   return parsed.model;
 }
 
-describe('Hardening Rules (CMP001 - CMP018)', () => {
+describe('Hardening Rules (CMP001 - CMP021)', () => {
   const positiveModel = loadModel('rules-positive.yml');
   const negativeModel = loadModel('rules-negative.yml');
 
-  it('exports all 18 rules with required metadata (id, title, severity, description, fix, references)', () => {
-    expect(ALL_RULES).toHaveLength(18);
+  it('exports all 21 rules with required metadata (id, title, severity, description, fix, references)', () => {
+    expect(ALL_RULES).toHaveLength(21);
+    expect(new Set(ALL_RULES.map((r) => r.id)).size).toBe(21);
     for (const rule of ALL_RULES) {
-      expect(rule.id).toMatch(/^CMP0(0[1-9]|1[0-8])$/);
+      expect(rule.id).toMatch(/^CMP0(0[1-9]|1[0-9]|2[01])$/);
       expect(rule.title.length).toBeGreaterThan(3);
       expect(rule.title.length).toBeLessThanOrEqual(26);
       expect(rule.description.length).toBeGreaterThan(10);
@@ -89,7 +90,7 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
 
   it('CMP003: detects :latest/untagged as medium, tagged without digest as info (positive), and passes @sha256 digest (negative)', () => {
     const pos = CMP003.check(positiveModel);
-    expect(pos).toHaveLength(2);
+    expect(pos).toHaveLength(3);
     expect(pos[0]).toMatchObject({
       ruleId: 'CMP003',
       severity: 'medium',
@@ -102,25 +103,28 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
       service: 'list-env-and-tag-no-digest',
       line: 33,
     });
+    expect(pos[2]).toMatchObject({ severity: 'info', service: 'published', line: 46 });
 
     expect(CMP003.check(negativeModel)).toHaveLength(0);
   });
 
   it('CMP004: detects ports bound to 0.0.0.0 with higher severity for DB/cache ports (positive) and passes 127.0.0.1 (negative)', () => {
     const pos = CMP004.check(positiveModel);
+    // insecure-all also lists ports, but with network_mode: host they are ignored by Docker
     expect(pos).toHaveLength(2);
     expect(pos[0]).toMatchObject({
       ruleId: 'CMP004',
       severity: 'medium',
-      service: 'insecure-all',
-      line: 10,
+      service: 'published',
+      line: 49,
     });
     expect(pos[1]).toMatchObject({
       ruleId: 'CMP004',
       severity: 'high',
-      service: 'insecure-all',
-      line: 11,
+      service: 'published',
+      line: 50,
     });
+    expect(pos.every((f) => f.autofix?.operations[0]?.kind === 'bindPortHostIp')).toBe(true);
 
     expect(CMP004.check(negativeModel)).toHaveLength(0);
   });
@@ -143,7 +147,7 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
     expect(CMP006.check(negativeModel)).toHaveLength(0);
   });
 
-  it('CMP007: detects missing cap_drop: [ALL] (positive) and passes when ALL is dropped (negative)', () => {
+  it('CMP007: detects missing cap_drop: [ALL] (positive, skipping privileged services where cap_drop is ignored) and passes when ALL is dropped (negative)', () => {
     const pos = CMP007.check(positiveModel);
     expect(pos).toHaveLength(2);
     expect(pos[0]?.ruleId).toBe('CMP007');
@@ -170,7 +174,7 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
 
   it('CMP009: detects missing no-new-privileges (positive) and passes when set (negative)', () => {
     const pos = CMP009.check(positiveModel);
-    expect(pos).toHaveLength(2);
+    expect(pos).toHaveLength(3);
     expect(pos[0]?.ruleId).toBe('CMP009');
 
     expect(CMP009.check(negativeModel)).toHaveLength(0);
@@ -217,7 +221,7 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
 
   it('CMP013: detects missing user as info and explicit root user as medium (positive) and passes non-root user (negative)', () => {
     const pos = CMP013.check(positiveModel);
-    expect(pos).toHaveLength(2);
+    expect(pos).toHaveLength(3);
     expect(pos[0]).toMatchObject({
       ruleId: 'CMP013',
       severity: 'info',
@@ -235,7 +239,7 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
 
   it('CMP014: detects missing memory or CPU limits (positive) and passes when both are set (negative)', () => {
     const pos = CMP014.check(positiveModel);
-    expect(pos).toHaveLength(2);
+    expect(pos).toHaveLength(3);
     expect(pos[0]?.message).toContain('memory or CPU');
     expect(pos[1]?.message).toContain('CPU');
 
@@ -244,14 +248,14 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
 
   it('CMP015: detects missing or disabled healthcheck (positive) and passes active healthcheck (negative)', () => {
     const pos = CMP015.check(positiveModel);
-    expect(pos).toHaveLength(2);
+    expect(pos).toHaveLength(3);
 
     expect(CMP015.check(negativeModel)).toHaveLength(0);
   });
 
   it('CMP016: detects missing read_only: true (positive) and passes read_only: true (negative)', () => {
     const pos = CMP016.check(positiveModel);
-    expect(pos).toHaveLength(2);
+    expect(pos).toHaveLength(3);
     expect(pos.every((f) => f.severity === 'info')).toBe(true);
 
     expect(CMP016.check(negativeModel)).toHaveLength(0);
@@ -259,7 +263,7 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
 
   it('CMP017: detects missing max-size logging (positive) and passes configured max-size (negative)', () => {
     const pos = CMP017.check(positiveModel);
-    expect(pos).toHaveLength(2);
+    expect(pos).toHaveLength(3);
     expect(pos.every((f) => f.ruleId === 'CMP017' && f.severity === 'low')).toBe(
       true,
     );
@@ -267,14 +271,16 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
     expect(CMP017.check(negativeModel)).toHaveLength(0);
   });
 
-  it('CMP018: detects default bridge network (positive) and passes isolated custom network (negative)', () => {
+  it('CMP018: detects the legacy docker0 bridge (network_mode: bridge) and passes isolated custom network (negative)', () => {
     const pos = CMP018.check(positiveModel);
-    // insecure-all is network_mode: host (not bridge); list-env-and-tag-no-digest is implicit default
+    // Compose's implicit `default` network is a project-scoped user-defined bridge,
+    // not docker0, so only network_mode: bridge is a real finding here.
     expect(pos).toHaveLength(1);
     expect(pos[0]).toMatchObject({
       ruleId: 'CMP018',
-      service: 'list-env-and-tag-no-digest',
+      service: 'published',
       severity: 'medium',
+      line: 47,
     });
 
     expect(CMP018.check(negativeModel)).toHaveLength(0);
@@ -287,44 +293,14 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
     expect(perfectScore.score).toBe(100);
     expect(perfectScore.grade).toBe('A');
 
-    // Verify exact penalty weights: critical -25, high -10, medium -4, low -1, info 0
+    // Per-service penalties: critical 30, high 15, medium 6, low 2, info 0
     const sampleScore = calculateSecurityScore([
-      {
-        ruleId: 'CMP003',
-        title: 'info',
-        severity: 'info',
-        service: 's',
-        line: 1,
-        description: '',
-        message: '',
-        fix: '',
-        references: [],
-      },
-      {
-        ruleId: 'CMP007',
-        title: 'low',
-        severity: 'low',
-        service: 's',
-        line: 1,
-        description: '',
-        message: '',
-        fix: '',
-        references: [],
-      },
-      {
-        ruleId: 'CMP009',
-        title: 'medium',
-        severity: 'medium',
-        service: 's',
-        line: 1,
-        description: '',
-        message: '',
-        fix: '',
-        references: [],
-      },
+      fakeFinding('info', 's'),
+      fakeFinding('low', 's'),
+      fakeFinding('medium', 's'),
     ]);
-    // 100 - (0 + 1 + 4) = 95 -> Grade A
-    expect(sampleScore.score).toBe(95);
+    // 100 - (0 + 2 + 6) = 92 -> Grade A
+    expect(sampleScore.score).toBe(92);
     expect(sampleScore.grade).toBe('A');
 
     const allPositiveFindings = runRules(positiveModel);
@@ -347,70 +323,55 @@ describe('Hardening Rules (CMP001 - CMP018)', () => {
   });
 });
 
-describe('applyFindingFix', () => {
-  it('applies scalar properties such as privileged: false to the target service', () => {
-    const yaml = `services:
-  web:
-    image: nginx
-    privileged: true
-`;
-    const finding = {
-      ruleId: 'CMP001',
-      title: 'Privileged container',
-      severity: 'critical' as const,
-      service: 'web',
-      line: 4,
-      description: '',
-      message: '',
-      fix: 'Disable privileged:\n```yaml\nservices:\n  web:\n    privileged: false\n```',
-      references: [],
-    };
+function fakeFinding(severity: Finding['severity'], service: string): Finding {
+  return {
+    ruleId: 'CMP000',
+    title: severity,
+    severity,
+    service,
+    line: 1,
+    description: '',
+    message: '',
+    fix: '',
+    references: [],
+  };
+}
 
-    const updated = applyFindingFix(yaml, finding);
-    expect(updated).not.toBeNull();
-    expect(updated).toContain('privileged: false');
-    expect(updated).toContain('image: nginx');
+describe('Security score', () => {
+  it('does not punish projects for having many services', () => {
+    const findings = ['a', 'b', 'c', 'd', 'e', 'f'].flatMap((svc) => [
+      fakeFinding('medium', svc),
+      fakeFinding('low', svc),
+    ]);
+    const score = calculateSecurityScore(findings, { services: ['a', 'b', 'c', 'd', 'e', 'f'] });
+    // Each service scores 92; six alike services score the same as one
+    expect(score.score).toBe(92);
+    expect(score.serviceScores['a']).toBe(92);
   });
 
-  it('appends sequence items without duplicating existing items', () => {
-    const yaml = `services:
-  app:
-    image: node:20
-    cap_drop:
-      - NET_RAW
-`;
-    const finding = {
-      ruleId: 'CMP007',
-      title: 'Capabilities not dropped',
-      severity: 'low' as const,
-      service: 'app',
-      line: 1,
-      description: '',
-      message: '',
-      fix: 'Drop capabilities:\n```yaml\nservices:\n  app:\n    cap_drop:\n      - ALL\n```',
-      references: [],
-    };
-
-    const updated = applyFindingFix(yaml, finding);
-    expect(updated).not.toBeNull();
-    expect(updated).toContain('- NET_RAW');
-    expect(updated).toContain('- ALL');
+  it('weighs the weakest service and counts clean services as 100', () => {
+    const score = calculateSecurityScore(
+      [fakeFinding('medium', 'web'), fakeFinding('medium', 'web'), fakeFinding('medium', 'web')],
+      { services: ['web', 'db', 'cache'] },
+    );
+    // web = 82, mean = (82 + 100 + 100) / 3 = 94; (82 + 94) / 2 = 88
+    expect(score.score).toBe(88);
+    expect(score.grade).toBe('B');
   });
 
-  it('returns null if finding has no valid yaml fix block', () => {
-    const yaml = 'services:\n  web:\n    image: nginx\n';
-    const finding = {
-      ruleId: 'CMP999',
-      title: 'No fix block',
-      severity: 'low' as const,
-      service: 'web',
-      line: 1,
-      description: '',
-      message: '',
-      fix: 'Just manual instructions without code block',
-      references: [],
-    };
+  it('caps the grade while critical or high findings are open', () => {
+    const critical = calculateSecurityScore([fakeFinding('critical', 'a')], {
+      services: ['a', 'b', 'c', 'd'],
+    });
+    expect(critical.score).toBeLessThanOrEqual(59);
+    expect(critical.grade).toBe('D');
 
-    expect(applyFindingFix(yaml, finding)).toBeNull();
+    const high = calculateSecurityScore([fakeFinding('high', 'a')], { services: ['a', 'b', 'c'] });
+    expect(high.score).toBe(74);
+    expect(high.grade).toBe('C');
+  });
+
+  it('scores an empty finding list as a perfect 100', () => {
+    expect(calculateSecurityScore([], { services: ['a'] })).toMatchObject({ score: 100, grade: 'A' });
   });
 });

@@ -1,22 +1,36 @@
 {
   "name": "composure",
   "private": true,
-  "version": "0.1.0",
-  "description": "Client-side Docker Compose visualizer and security hardening checker",
+  "version": "0.2.0",
+  "description": "Client-side Docker Compose visualizer, validator, and security hardening checker, with a CLI for CI",
   "type": "module",
+  "bin": {
+    "composure": "dist-cli/composure.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:cli": "vite build --config vite.cli.config.ts",
     "preview": "vite preview",
+    "typecheck": "tsc -b",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "composure": "node dist-cli/composure.mjs"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/commands": "^6.8.0",
     "@codemirror/lang-yaml": "^6.1.2",
     "@codemirror/language": "^6.10.8",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/search": "^6.7.2",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.36.2",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
     "@xyflow/react": "^12.4.2",
     "codemirror": "^6.0.1",
     "elkjs": "^0.9.3",

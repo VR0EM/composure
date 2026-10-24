@@ -2,18 +2,29 @@ import { ReactNode, useMemo, useState } from 'react';
 import {
   Finding,
   SEVERITY_ORDER,
+  SecurityScoreSummary,
   Severity,
-  calculateSecurityScore,
+  SuppressedFinding,
   groupFindingsBySeverity,
 } from '../core';
 import { ChevronDownIcon } from './Icons';
 
 interface FindingsPanelProps {
   findings: Finding[];
+  suppressed: SuppressedFinding[];
+  score: SecurityScoreSummary;
   onToggleRule: (ruleId: string) => void;
   onSelectFinding: (finding: Finding) => void;
+  onJumpToLine: (line: number) => void;
   onApplyFix?: (finding: Finding) => void;
+  onSuppress?: (finding: Finding) => void;
 }
+
+const SCORE_EXPLANATION =
+  'Each service starts at 100 and loses points per finding (critical 30, high 15, medium 6, low 2). ' +
+  'The project score averages the weakest service with the mean of all services. ' +
+  'Open critical findings cap the score at 59 (D), high findings at 74 (C). ' +
+  'Accepted risks (composure-ignore comments) do not count.';
 
 export const SEVERITY_DOT_COLORS: Record<Severity, string> = {
   critical: 'bg-[var(--sev-critical-border)]',
@@ -80,25 +91,12 @@ function parseFixContent(fix: string): {
   return { text: fix, yamlCode: null };
 }
 
-const CONTEXTUAL_MESSAGE_RULES = new Set([
-  'CMP002',
-  'CMP003',
-  'CMP004',
-  'CMP006',
-  'CMP010',
-  'CMP011',
-  'CMP012',
-  'CMP014',
-]);
-
 function formatFindingExplanation(finding: Finding): string {
-  if (CONTEXTUAL_MESSAGE_RULES.has(finding.ruleId)) {
-    return `${finding.message} ${finding.description}`;
-  }
-  return finding.description;
+  return `${finding.message} ${finding.description}`;
 }
 
 interface RuleFindingGroup {
+  key: string;
   ruleId: string;
   title: string;
   severity: Severity;
@@ -108,11 +106,13 @@ interface RuleFindingGroup {
 function groupFindingsByRule(list: Finding[]): RuleFindingGroup[] {
   const map = new Map<string, RuleFindingGroup>();
   for (const f of list) {
-    const existing = map.get(f.ruleId);
+    const key = `${f.ruleId}:${f.title}`;
+    const existing = map.get(key);
     if (existing) {
       existing.items.push(f);
     } else {
-      map.set(f.ruleId, {
+      map.set(key, {
+        key,
         ruleId: f.ruleId,
         title: f.title,
         severity: f.severity,
@@ -125,9 +125,13 @@ function groupFindingsByRule(list: Finding[]): RuleFindingGroup[] {
 
 export function FindingsPanel({
   findings,
+  suppressed,
+  score: scoreSummary,
   onToggleRule,
   onSelectFinding,
+  onJumpToLine,
   onApplyFix,
+  onSuppress,
 }: FindingsPanelProps) {
   const [groupBy, setGroupBy] = useState<'severity' | 'service'>('severity');
   // Info hidden by default
@@ -141,11 +145,7 @@ export function FindingsPanel({
   // Only one finding or rule group expanded at a time
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
-  const scoreSummary = useMemo(
-    () => calculateSecurityScore(findings),
-    [findings],
-  );
-
+  const [showSuppressed, setShowSuppressed] = useState(false);
   const filteredFindings = useMemo(
     () => findings.filter((f) => visibleSeverities.has(f.severity)),
     [findings, visibleSeverities],
@@ -200,7 +200,7 @@ export function FindingsPanel({
       {/* Top Summary: 40px Grade letter on the left, Score below Grade label, Group toggle, and Filter chips */}
       <div className="px-4 py-3 border-b border-[var(--border-subtle)] space-y-2.5 shrink-0">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5" title={SCORE_EXPLANATION}>
             <div
               className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-base font-mono border shadow-xs ${
                 scoreSummary.grade === 'A'
@@ -285,7 +285,9 @@ export function FindingsPanel({
       <div className="flex-1 overflow-y-auto">
         {filteredFindings.length === 0 ? (
           <div className="p-6 text-center text-xs text-[var(--text-secondary)]">
-            No findings. This tool checks configuration only, not image contents.
+            {findings.length > 0
+              ? 'All findings are hidden by the severity filters above.'
+              : 'No findings. This tool checks configuration only, not image contents.'}
           </div>
         ) : groupBy === 'severity' ? (
           SEVERITY_ORDER.map((severity) => {
@@ -315,7 +317,7 @@ export function FindingsPanel({
                 {!isCollapsed && (
                   <div className="divide-y divide-[var(--border-subtle)]/60">
                     {ruleGroups.map((ruleGroup) => {
-                      const itemKey = `rule:${severity}:${ruleGroup.ruleId}`;
+                      const itemKey = `rule:${severity}:${ruleGroup.key}`;
                       return (
                         <CompactRuleGroupRow
                           key={itemKey}
@@ -331,6 +333,7 @@ export function FindingsPanel({
                           onSelectFinding={onSelectFinding}
                           onDisableRule={() => onToggleRule(ruleGroup.ruleId)}
                           onApplyFix={onApplyFix}
+                          onSuppress={onSuppress}
                         />
                       );
                     })}
@@ -383,6 +386,7 @@ export function FindingsPanel({
                           }}
                           onDisableRule={() => onToggleRule(finding.ruleId)}
                           onApplyFix={onApplyFix}
+                          onSuppress={onSuppress}
                         />
                       );
                     })}
@@ -391,6 +395,50 @@ export function FindingsPanel({
               </section>
             );
           })
+        )}
+
+        {suppressed.length > 0 && (
+          <section className="border-t border-[var(--border-subtle)]">
+            <button
+              type="button"
+              onClick={() => setShowSuppressed((v) => !v)}
+              aria-expanded={showSuppressed}
+              className="w-full px-4 py-2 flex items-center justify-between text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-[var(--bg-elevated)]/50"
+            >
+              <span>Accepted risks {suppressed.length}</span>
+              <ChevronDownIcon
+                className={`w-3.5 h-3.5 transition-transform ${showSuppressed ? '' : '-rotate-90'}`}
+              />
+            </button>
+            {showSuppressed && (
+              <ul className="divide-y divide-[var(--border-subtle)]/60">
+                {suppressed.map((f, idx) => (
+                  <li key={`${f.ruleId}-${f.service}-${f.line}-${idx}`}>
+                    <button
+                      type="button"
+                      onClick={() => onJumpToLine(f.suppression.line)}
+                      className="w-full px-3.5 py-2 text-left flex items-start gap-2 text-xs hover:bg-[var(--bg-elevated)]/60"
+                    >
+                      <span
+                        className={`mt-1 w-2 h-2 rounded-full shrink-0 opacity-50 ${SEVERITY_DOT_COLORS[f.severity]}`}
+                      />
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-[var(--text-secondary)] truncate">
+                          {f.ruleId} {f.title} · {f.service}
+                        </span>
+                        {f.suppression.reason && (
+                          <span className="block text-[var(--text-muted)] truncate">
+                            {f.suppression.reason}
+                          </span>
+                        )}
+                      </span>
+                      <span className="shrink-0 text-[var(--text-muted)]">L{f.suppression.line}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         )}
       </div>
     </div>
@@ -404,6 +452,7 @@ function CompactRuleGroupRow({
   onSelectFinding,
   onDisableRule,
   onApplyFix,
+  onSuppress,
 }: {
   ruleGroup: RuleFindingGroup;
   isExpanded: boolean;
@@ -411,6 +460,7 @@ function CompactRuleGroupRow({
   onSelectFinding: (finding: Finding) => void;
   onDisableRule: () => void;
   onApplyFix?: (finding: Finding) => void;
+  onSuppress?: (finding: Finding) => void;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const activeFinding =
@@ -482,6 +532,7 @@ function CompactRuleGroupRow({
             finding={activeFinding}
             onDisableRule={onDisableRule}
             onApplyFix={onApplyFix}
+            onSuppress={onSuppress}
           />
         </div>
       )}
@@ -495,12 +546,14 @@ function CompactFindingRow({
   onToggleExpand,
   onDisableRule,
   onApplyFix,
+  onSuppress,
 }: {
   finding: Finding;
   isExpanded: boolean;
   onToggleExpand: () => void;
   onDisableRule: () => void;
   onApplyFix?: (finding: Finding) => void;
+  onSuppress?: (finding: Finding) => void;
 }) {
   return (
     <div className="text-xs">
@@ -535,6 +588,7 @@ function CompactFindingRow({
             finding={finding}
             onDisableRule={onDisableRule}
             onApplyFix={onApplyFix}
+            onSuppress={onSuppress}
           />
         </div>
       )}
@@ -546,29 +600,26 @@ function FindingExpandedContent({
   finding,
   onDisableRule,
   onApplyFix,
+  onSuppress,
 }: {
   finding: Finding;
   onDisableRule: () => void;
   onApplyFix?: (finding: Finding) => void;
+  onSuppress?: (finding: Finding) => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const [applied, setApplied] = useState(false);
   const { text: fixText, yamlCode } = parseFixContent(finding.fix);
 
   const handleCopyYaml = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!yamlCode) return;
-    navigator.clipboard?.writeText(yamlCode);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  };
-
-  const handleApplyFix = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!onApplyFix) return;
-    onApplyFix(finding);
-    setApplied(true);
-    window.setTimeout(() => setApplied(false), 1500);
+    navigator.clipboard
+      ?.writeText(yamlCode)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => undefined);
   };
 
   const explanation = formatFindingExplanation(finding);
@@ -580,32 +631,20 @@ function FindingExpandedContent({
       </p>
 
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-start justify-between gap-2">
           {fixText && (
-            <span className="text-xs text-[var(--text-primary)] font-medium">
+            <span className="text-xs text-[var(--text-primary)] font-medium leading-relaxed">
               {renderInlineCode(fixText)}
             </span>
           )}
           {yamlCode && (
-            <div className="flex items-center gap-2 shrink-0">
-              {onApplyFix && (
-                <button
-                  type="button"
-                  onClick={handleApplyFix}
-                  className="text-xs px-2 py-0.5 rounded bg-[var(--accent-bg)] text-[var(--accent)] font-medium hover:opacity-90 transition-opacity"
-                  title="Apply remediation YAML directly to compose file"
-                >
-                  {applied ? 'Applied!' : 'Apply Fix'}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={handleCopyYaml}
-                className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline"
-              >
-                {copied ? 'Copied' : 'Copy YAML'}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={handleCopyYaml}
+              className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline shrink-0"
+            >
+              {copied ? 'Copied' : 'Copy YAML'}
+            </button>
           )}
         </div>
 
@@ -616,15 +655,46 @@ function FindingExpandedContent({
         )}
       </div>
 
+      {(finding.autofix || onSuppress) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {finding.autofix && onApplyFix && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onApplyFix(finding);
+              }}
+              className="text-xs px-2 py-1 rounded bg-[var(--accent-bg)] text-[var(--accent)] font-medium hover:opacity-90 transition-opacity"
+              title="Preview the exact change, then apply it to the editor"
+            >
+              Fix: {finding.autofix.label}
+            </button>
+          )}
+          {onSuppress && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSuppress(finding);
+              }}
+              className="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors"
+              title={`Insert "# composure-ignore ${finding.ruleId}" above line ${finding.line}`}
+            >
+              Accept risk
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-2 pt-0.5">
-        <div className="flex flex-wrap gap-3 min-w-0">
+        <div className="flex flex-wrap gap-x-3 gap-y-1 min-w-0">
           {finding.references.map((ref, idx) => (
             <a
               key={idx}
               href={ref.url}
               target="_blank"
               rel="noreferrer"
-              className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline truncate"
+              className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline truncate max-w-full"
             >
               {ref.title}
             </a>
@@ -634,6 +704,7 @@ function FindingExpandedContent({
         <button
           type="button"
           onClick={onDisableRule}
+          title={`Turn off ${finding.ruleId} for every file (Settings to undo)`}
           className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
         >
           Mute {finding.ruleId}

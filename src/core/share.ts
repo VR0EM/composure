@@ -6,8 +6,9 @@
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]!);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   const base64 = btoa(binary);
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -26,29 +27,18 @@ function base64UrlToBytes(base64Url: string): Uint8Array {
   return bytes;
 }
 
-async function streamToUint8Array(
-  stream: ReadableStream<Uint8Array>,
+/**
+ * Pipe bytes through a (de)compression stream and collect the output.
+ * Reading and writing happen concurrently via pipeThrough, which avoids the
+ * backpressure stall you can get by awaiting writes before reading.
+ */
+async function transformBytes(
+  bytes: Uint8Array,
+  transform: CompressionStream | DecompressionStream,
 ): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalLength = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      chunks.push(value);
-      totalLength += value.length;
-    }
-  }
-
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return result;
+  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(transform);
+  const buffer = await new Response(stream).arrayBuffer();
+  return new Uint8Array(buffer);
 }
 
 /**
@@ -58,13 +48,7 @@ export async function compressYamlToHash(yamlText: string): Promise<string> {
   const inputBytes = new TextEncoder().encode(yamlText);
 
   if (typeof CompressionStream !== 'undefined') {
-    const cs = new CompressionStream('deflate-raw');
-    const writer = cs.writable.getWriter();
-    await writer.write(inputBytes);
-    await writer.close();
-    const compressed = await streamToUint8Array(
-      cs.readable as ReadableStream<Uint8Array>,
-    );
+    const compressed = await transformBytes(inputBytes, new CompressionStream('deflate-raw'));
     return `z.${bytesToBase64Url(compressed)}`;
   }
 
@@ -78,25 +62,26 @@ export async function decompressYamlFromHash(
   hashPayload: string,
 ): Promise<string | null> {
   try {
-    const clean = hashPayload.replace(/^#/, '').replace(/^compose=/, '').trim();
+    const clean = hashPayload
+      .replace(/^#/, '')
+      .replace(/^.*?compose=/, '')
+      .split('&')[0]!
+      .trim();
     if (!clean) return null;
 
     if (clean.startsWith('z.')) {
       if (typeof DecompressionStream === 'undefined') return null;
       const compressedBytes = base64UrlToBytes(clean.slice(2));
-      const ds = new DecompressionStream('deflate-raw');
-      const writer = ds.writable.getWriter();
-      await writer.write(compressedBytes as unknown as BufferSource);
-      await writer.close();
-      const decompressed = await streamToUint8Array(
-        ds.readable as ReadableStream<Uint8Array>,
+      const decompressed = await transformBytes(
+        compressedBytes,
+        new DecompressionStream('deflate-raw'),
       );
-      return new TextDecoder().decode(decompressed);
+      return new TextDecoder('utf-8', { fatal: true }).decode(decompressed);
     }
 
     if (clean.startsWith('u.')) {
       const rawBytes = base64UrlToBytes(clean.slice(2));
-      return new TextDecoder().decode(rawBytes);
+      return new TextDecoder('utf-8', { fatal: true }).decode(rawBytes);
     }
 
     return null;

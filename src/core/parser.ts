@@ -1,6 +1,7 @@
 import { LineCounter, parseDocument } from 'yaml';
 import { normalizeComposeDocument } from './normalizer';
 import { ComposeParseError, ParseResult } from './types';
+import { validateComposeModel } from './validator';
 
 /**
  * Parse and normalize a Docker Compose YAML string into a normalized ComposeModel.
@@ -58,7 +59,7 @@ export function parseCompose(yamlText: string): ParseResult {
     };
   }
 
-  const { model, errors, warnings } = normalizeComposeDocument(doc, lineCounter);
+  const { model, errors, diagnostics } = normalizeComposeDocument(doc, lineCounter);
 
   if (!model || errors.length > 0) {
     return {
@@ -70,9 +71,13 @@ export function parseCompose(yamlText: string): ParseResult {
     };
   }
 
+  const allDiagnostics = [...diagnostics, ...validateComposeModel(model)].sort(
+    (a, b) => a.line - b.line || (a.column ?? 0) - (b.column ?? 0),
+  );
+
   return {
     ok: true,
     model,
-    warnings,
+    diagnostics: allDiagnostics,
   };
 }

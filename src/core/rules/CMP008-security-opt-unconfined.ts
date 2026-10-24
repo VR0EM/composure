@@ -1,13 +1,45 @@
 import { ComposeModel, Finding, Rule } from '../types';
+import { cis, fixWithYaml } from './shared';
 
-function buildFix(serviceName: string): string {
-  return `Remove the \`unconfined\` option so Docker applies its default profile:
-\`\`\`yaml
+interface UnconfinedMatch {
+  title: string;
+  message: string;
+}
+
+/** Normalize `seccomp=unconfined`, `seccomp:unconfined`, `seccomp: unconfined` alike. */
+export function normalizeSecurityOpt(raw: string): string {
+  return raw.replace(/\s+/g, '').toLowerCase().replace('=', ':');
+}
+
+function matchUnconfined(raw: string): UnconfinedMatch | null {
+  const normalized = normalizeSecurityOpt(raw);
+  switch (normalized) {
+    case 'seccomp:unconfined':
+      return { title: 'seccomp unconfined', message: 'Disables the default seccomp syscall filter.' };
+    case 'apparmor:unconfined':
+      return { title: 'apparmor unconfined', message: 'Disables the AppArmor profile.' };
+    case 'label:disable':
+      return { title: 'SELinux labels disabled', message: 'Disables SELinux label separation.' };
+    case 'systempaths:unconfined':
+      return {
+        title: 'System paths unmasked',
+        message: 'Unmasks sensitive `/proc` and `/sys` paths that Docker normally hides.',
+      };
+    default:
+      return null;
+  }
+}
+
+function buildFix(serviceName: string, option: string): string {
+  return fixWithYaml(
+    `Remove \`${option}\` so Docker applies its default confinement. If the service needs one extra syscall, ship a custom seccomp profile instead:`,
+    `
 services:
   ${serviceName}:
     security_opt:
       - no-new-privileges:true
-\`\`\``;
+      # - seccomp=./seccomp-profile.json  # custom profile if really needed`,
+  );
 }
 
 export const CMP008: Rule = {
@@ -16,12 +48,11 @@ export const CMP008: Rule = {
   severity: 'high',
   description:
     'Disables default syscall filtering or mandatory access control.',
-  fix: buildFix('app'),
+  fix: buildFix('app', 'seccomp:unconfined'),
   references: [
-    {
-      title: 'CIS Docker Benchmark 5.2 and 5.21: AppArmor and seccomp profiles',
-      url: 'https://www.cisecurity.org/benchmark/docker',
-    },
+    cis('5.2', 'Ensure that, if applicable, an AppArmor Profile is enabled'),
+    cis('5.3', 'Ensure that, if applicable, SELinux security options are set'),
+    cis('5.22', 'Ensure the default seccomp profile is not Disabled'),
     {
       title: 'Docker Docs: Seccomp security profiles',
       url: 'https://docs.docker.com/engine/security/seccomp/',
@@ -32,38 +63,31 @@ export const CMP008: Rule = {
 
     for (const service of Object.values(model.services)) {
       for (const opt of service.securityOpt) {
-        const normalized = opt.value.replace(/\s+/g, '').toLowerCase();
-        if (
-          normalized === 'seccomp:unconfined' ||
-          normalized === 'seccomp=unconfined'
-        ) {
-          findings.push({
-            ruleId: this.id,
-            title: 'seccomp unconfined',
-            severity: this.severity,
-            service: service.name,
-            line: opt.line,
-            description: this.description,
-            message: 'Sets `seccomp:unconfined`.',
-            fix: buildFix(service.name),
-            references: this.references,
-          });
-        } else if (
-          normalized === 'apparmor:unconfined' ||
-          normalized === 'apparmor=unconfined'
-        ) {
-          findings.push({
-            ruleId: this.id,
-            title: 'apparmor unconfined',
-            severity: this.severity,
-            service: service.name,
-            line: opt.line,
-            description: this.description,
-            message: 'Sets `apparmor:unconfined`.',
-            fix: buildFix(service.name),
-            references: this.references,
-          });
-        }
+        const match = matchUnconfined(opt.value);
+        if (!match) continue;
+        findings.push({
+          ruleId: this.id,
+          title: match.title,
+          severity: this.severity,
+          service: service.name,
+          line: opt.line,
+          description: this.description,
+          message: `${match.message} (\`${opt.value}\`)`,
+          fix: buildFix(service.name, opt.value),
+          references: this.references,
+          autofix: {
+            label: `Remove ${opt.value}`,
+            operations: [
+              {
+                kind: 'removeListItem',
+                service: service.name,
+                key: 'security_opt',
+                item: opt.value,
+                compare: 'securityOpt',
+              },
+            ],
+          },
+        });
       }
     }
 

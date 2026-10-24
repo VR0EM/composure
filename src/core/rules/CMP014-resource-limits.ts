@@ -1,4 +1,5 @@
 import { ComposeModel, Finding, Rule } from '../types';
+import { cis } from './shared';
 
 function buildFix(serviceName: string): string {
   return `Set memory and CPU limits under \`deploy.resources.limits\`:
@@ -21,10 +22,8 @@ export const CMP014: Rule = {
     'Unbounded containers can exhaust host memory or CPU and starve other services.',
   fix: buildFix('app'),
   references: [
-    {
-      title: 'CIS Docker Benchmark 5.10 and 5.11: Set memory and CPU limits',
-      url: 'https://www.cisecurity.org/benchmark/docker',
-    },
+    cis('5.11', 'Ensure that the memory usage for containers is limited'),
+    cis('5.12', 'Ensure that CPU priority is set appropriately on containers'),
     {
       title: 'Docker Compose Specification: Deploy resources',
       url: 'https://docs.docker.com/reference/compose-file/deploy/#resources',

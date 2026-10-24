@@ -78,7 +78,7 @@ export interface DiagramNode {
   data: DiagramNodeData;
 }
 
-export type DiagramEdgeKind = 'port' | 'network' | 'volume' | 'dependsOn';
+export type DiagramEdgeKind = 'port' | 'network' | 'networkMode' | 'volume' | 'dependsOn';
 
 export interface DiagramEdge {
   id: string;
@@ -170,7 +170,9 @@ export function splitImageReference(
 
 function isLoopbackIp(hostIp?: string): boolean {
   if (!hostIp) return false;
-  const trimmed = hostIp.trim();
+  // `${BIND_IP:-127.0.0.1}`: judge by the fallback value
+  const fallback = /^\$\{[A-Za-z_]\w*:?-([^}]*)\}$/.exec(hostIp.trim());
+  const trimmed = (fallback ? fallback[1] ?? '' : hostIp).trim().replace(/^\[|\]$/g, '');
   return (
     trimmed === '127.0.0.1' ||
     trimmed.startsWith('127.') ||
@@ -292,7 +294,10 @@ export function buildComposeGraph(
     });
 
     // Service -> Networks
+    const seenNetworks = new Set<string>();
     for (const net of service.networks) {
+      if (seenNetworks.has(net.name)) continue;
+      seenNetworks.add(net.name);
       const list = networkConnections.get(net.name) ?? [];
       if (!list.includes(service.name)) {
         list.push(service.name);
@@ -354,6 +359,21 @@ export function buildComposeGraph(
         });
       }
     });
+
+    // Service -> Service (network_mode: service:<name> shares that service's network stack)
+    const sharedNetworkTarget = service.networkMode?.trim().startsWith('service:')
+      ? service.networkMode.trim().slice('service:'.length)
+      : undefined;
+    if (sharedNetworkTarget && model.services[sharedNetworkTarget]) {
+      edges.push({
+        id: `edge:netmode:${service.name}:${sharedNetworkTarget}`,
+        source: serviceNodeId,
+        target: `service:${sharedNetworkTarget}`,
+        kind: 'networkMode',
+        label: 'shares network',
+        dashed: true,
+      });
+    }
 
     // Service -> Service (depends_on)
     for (const dep of service.dependsOn) {

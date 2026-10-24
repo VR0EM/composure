@@ -12,9 +12,10 @@ permissions:
   pages: write
   id-token: write
 
+# Cancel superseded PR runs, but never cancel a running deploy of main
 concurrency:
-  group: "pages"
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-and-test:
@@ -38,6 +39,11 @@ jobs:
       - name: Build production bundle
         run: npm run build
 
+      - name: Build CLI and check the example files
+        run: |
+          npm run build:cli
+          node dist-cli/composure.mjs --fail-on none tests/fixtures/rules-negative.yml tests/fixtures/long-syntax.yml
+
       - name: Configure Pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
@@ -50,6 +56,9 @@ jobs:
 
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

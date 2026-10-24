@@ -1,8 +1,51 @@
-import ELK from 'elkjs/lib/elk.bundled.js';
+import type { ELK as ElkInstance } from 'elkjs/lib/elk-api';
 import { Edge, MarkerType, Node, Position } from '@xyflow/react';
 import { ComposeGraph, DiagramEdge, DiagramNode, DiagramNodeData } from '../../core';
 
-const elk = new ELK();
+let elkPromise: Promise<ElkInstance> | null = null;
+
+async function loadBundledElk(): Promise<ElkInstance> {
+  const { default: ElkBundled } = await import('elkjs/lib/elk.bundled.js');
+  return new ElkBundled();
+}
+
+/**
+ * ELK is large (about 1.4 MB) and CPU heavy. In the browser it runs in a Web
+ * Worker so layout never blocks typing; in Node (tests, CLI) it falls back to
+ * the bundled in-thread build.
+ */
+function getElk(): Promise<ElkInstance> {
+  if (!elkPromise) {
+    elkPromise = (async () => {
+      if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+        try {
+          const [{ default: ElkApi }, { default: workerUrl }] = await Promise.all([
+            import('elkjs/lib/elk-api.js'),
+            import('elkjs/lib/elk-worker.min.js?url'),
+          ]);
+          return new ElkApi({ workerUrl });
+        } catch {
+          return loadBundledElk();
+        }
+      }
+      return loadBundledElk();
+    })();
+  }
+  return elkPromise;
+}
+
+async function runElkLayout(graph: Parameters<ElkInstance['layout']>[0]) {
+  const elk = await getElk();
+  try {
+    return await elk.layout(graph);
+  } catch (err) {
+    // A worker that failed to start (e.g. blocked by policy): retry in-thread once
+    elkPromise = loadBundledElk();
+    const fallback = await elkPromise;
+    if (fallback === elk) throw err;
+    return fallback.layout(graph);
+  }
+}
 
 export type LayoutDirection = 'RIGHT' | 'DOWN';
 
@@ -43,6 +86,8 @@ function getEdgeStyle(edge: DiagramEdge): {
       return { stroke: 'var(--node-port-border)', strokeWidth: 1.5 };
     case 'network':
       return { stroke: 'var(--node-network-border)', strokeWidth: 1.5 };
+    case 'networkMode':
+      return { stroke: 'var(--node-network-border)', strokeWidth: 1.25, strokeDasharray: '4 4' };
     case 'volume': {
       const isBind = edge.target.startsWith('bind:');
       return {
@@ -103,7 +148,7 @@ export async function layoutComposeGraph(
     })),
   };
 
-  const laidOut = await elk.layout(elkGraph);
+  const laidOut = await runElkLayout(elkGraph);
   const positions = new Map<string, XYPoint>();
 
   let minX = Infinity;

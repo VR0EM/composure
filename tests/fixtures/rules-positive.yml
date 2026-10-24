@@ -41,3 +41,10 @@ services:
       resources:
         limits:
           memory: 256M
+
+  published:
+    image: nginx:1.27-alpine
+    network_mode: bridge
+    ports:
+      - "8080:80"
+      - "5432:5432"

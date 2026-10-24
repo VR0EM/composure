@@ -89,8 +89,12 @@ export function NodeDetailsPanel({
               <span className="text-[var(--text-secondary)]">Type</span>
               <span className="text-[var(--text-primary)]">
                 {nodeData.network.implicit
-                  ? 'Implicit default'
-                  : nodeData.network.driver ?? 'bridge'}
+                  ? nodeData.network.name === 'default'
+                    ? 'Implicit project network'
+                    : 'Not declared (see Problems)'
+                  : nodeData.network.external
+                    ? 'External'
+                    : nodeData.network.driver ?? 'bridge'}
               </span>
             </div>
             {nodeData.network.internal !== undefined && (
@@ -224,6 +228,32 @@ function ServiceDetailsContent({
             <span className="text-[var(--text-secondary)]">Network mode</span>
             <span className="font-mono text-[var(--text-primary)]">
               {service.networkMode}
+            </span>
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[var(--text-secondary)]">User</span>
+          <span className="font-mono text-[var(--text-primary)]">
+            {service.user ?? 'image default'}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[var(--text-secondary)]">Root filesystem</span>
+          <span className="text-[var(--text-primary)]">
+            {service.readOnly ? 'read-only' : 'writable'}
+          </span>
+        </div>
+        {service.restart && (
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[var(--text-secondary)]">Restart</span>
+            <span className="font-mono text-[var(--text-primary)]">{service.restart}</span>
+          </div>
+        )}
+        {(service.secrets.length > 0 || service.configs.length > 0) && (
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-[var(--text-secondary)]">Secrets / configs</span>
+            <span className="font-mono text-[var(--text-primary)] text-right">
+              {[...service.secrets.map((r) => r.source), ...service.configs.map((r) => r.source)].join(', ')}
             </span>
           </div>
         )}
