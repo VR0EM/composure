@@ -6,6 +6,7 @@ export * from './rules';
 export * from './ruleEngine';
 export * from './share';
 export * from './report';
+export * from './applyFix';
 
 
 

@@ -33,6 +33,16 @@ services:
         limits:
           memory: 512M
           cpus: "0.50"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - secure_net
+
+networks:
+  secure_net:
 
 volumes:
   app_data:

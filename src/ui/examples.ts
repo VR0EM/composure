@@ -75,6 +75,11 @@ x-hardened: &hardened-defaults
       limits:
         memory: 256M
         cpus: "0.50"
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   ingress:
@@ -174,6 +179,11 @@ x-service-base: &service-base
       limits:
         memory: 384M
         cpus: "0.50"
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   gateway:

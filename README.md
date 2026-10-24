@@ -19,11 +19,9 @@ Paste or drop a Compose file to immediately inspect:
 
 ## Screenshots
 
-> _Screenshot placeholders: replace with captures from your deployment:_
-
 | Interactive Topology & Live YAML Editor (Dark Mode) | Security Hardening Findings & Node Inspector (Light Mode) |
 | :---: | :---: |
-| `docs/screenshots/composure-dark-placeholder.png` | `docs/screenshots/composure-light-placeholder.png` |
+| ![Composure Dark Mode](docs/screenshots/composure-dark.png) | ![Composure Light Mode](docs/screenshots/composure-light.png) |
 
 ---
 
@@ -45,7 +43,7 @@ Paste or drop a Compose file to immediately inspect:
 
 ---
 
-## Hardening Rules (`CMP001` to `CMP016`)
+## Hardening Rules (`CMP001` to `CMP018`)
 
 | Rule ID | Severity | Title | What It Checks |
 | :--- | :--- | :--- | :--- |
@@ -65,6 +63,20 @@ Paste or drop a Compose file to immediately inspect:
 | **`CMP014`** | `low` | No resource limits set | Flags services missing memory or CPU limits in `deploy.resources.limits` or `mem_limit`/`cpus`. |
 | **`CMP015`** | `low` | No healthcheck defined | Flags services without an active `healthcheck`. |
 | **`CMP016`** | `info` | Root filesystem writable | Flags services without `read_only: true`. |
+| **`CMP017`** | `low` | Uncapped container logging | Flags missing `logging` or missing `max-size` rotation option to protect host disk. |
+| **`CMP018`** | `medium` | Default bridge network | Flags services on default Docker bridge without user-defined custom network isolation. |
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+| :--- | :--- |
+| `Esc` | Clear selection / switch back to Findings / close dialogs |
+| `Cmd+O` / `Ctrl+O` | Open `docker-compose.yml` file picker |
+| `Cmd+S` / `Ctrl+S` | Open Export menu (SVG, PNG, Markdown) |
+| `Cmd+B` / `Ctrl+B` | Toggle / collapse left YAML editor panel |
+| `Cmd+\` / `Ctrl+\` | Toggle / collapse right Findings & Details panel |
 
 ---
 
@@ -72,8 +84,8 @@ Paste or drop a Compose file to immediately inspect:
 
 Composure is strictly separated into a pure TypeScript core engine and a React UI layer so the core engine can be reused in a standalone CLI or GitHub Action:
 
-- `src/core/`: Pure TypeScript (zero React or DOM imports). Contains the YAML parser (`parser.ts`), Compose syntax normalizer (`normalizer.ts`), graph builder (`graph.ts`), rule engine (`ruleEngine.ts`), Markdown report generator (`report.ts`), and URL hash compressor (`share.ts`).
-- `src/core/rules/`: One file per hardening rule (`CMP001` through `CMP016`).
+- `src/core/`: Pure TypeScript (zero React or DOM imports). Contains the YAML parser (`parser.ts`), Compose syntax normalizer (`normalizer.ts`), graph builder (`graph.ts`), rule engine (`ruleEngine.ts`), remediation patcher (`applyFix.ts`), Markdown report generator (`report.ts`), and URL hash compressor (`share.ts`).
+- `src/core/rules/`: One file per hardening rule (`CMP001` through `CMP018`).
 - `src/ui/`: React components, CodeMirror 6 editor integration, and React Flow + ELK diagram components.
 - `tests/`: Vitest test suites and YAML fixtures (`tests/fixtures/`).
 

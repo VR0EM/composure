@@ -19,7 +19,10 @@ import {
   CMP014,
   CMP015,
   CMP016,
+  CMP017,
+  CMP018,
   ComposeModel,
+  applyFindingFix,
   calculateSecurityScore,
   groupFindingsBySeverity,
   parseCompose,
@@ -37,14 +40,14 @@ function loadModel(fixtureName: string): ComposeModel {
   return parsed.model;
 }
 
-describe('Hardening Rules (CMP001 - CMP016)', () => {
+describe('Hardening Rules (CMP001 - CMP018)', () => {
   const positiveModel = loadModel('rules-positive.yml');
   const negativeModel = loadModel('rules-negative.yml');
 
-  it('exports all 16 rules with required metadata (id, title, severity, description, fix, references)', () => {
-    expect(ALL_RULES).toHaveLength(16);
+  it('exports all 18 rules with required metadata (id, title, severity, description, fix, references)', () => {
+    expect(ALL_RULES).toHaveLength(18);
     for (const rule of ALL_RULES) {
-      expect(rule.id).toMatch(/^CMP0(0[1-9]|1[0-6])$/);
+      expect(rule.id).toMatch(/^CMP0(0[1-9]|1[0-8])$/);
       expect(rule.title.length).toBeGreaterThan(3);
       expect(rule.title.length).toBeLessThanOrEqual(26);
       expect(rule.description.length).toBeGreaterThan(10);
@@ -254,6 +257,29 @@ describe('Hardening Rules (CMP001 - CMP016)', () => {
     expect(CMP016.check(negativeModel)).toHaveLength(0);
   });
 
+  it('CMP017: detects missing max-size logging (positive) and passes configured max-size (negative)', () => {
+    const pos = CMP017.check(positiveModel);
+    expect(pos).toHaveLength(2);
+    expect(pos.every((f) => f.ruleId === 'CMP017' && f.severity === 'low')).toBe(
+      true,
+    );
+
+    expect(CMP017.check(negativeModel)).toHaveLength(0);
+  });
+
+  it('CMP018: detects default bridge network (positive) and passes isolated custom network (negative)', () => {
+    const pos = CMP018.check(positiveModel);
+    // insecure-all is network_mode: host (not bridge); list-env-and-tag-no-digest is implicit default
+    expect(pos).toHaveLength(1);
+    expect(pos[0]).toMatchObject({
+      ruleId: 'CMP018',
+      service: 'list-env-and-tag-no-digest',
+      severity: 'medium',
+    });
+
+    expect(CMP018.check(negativeModel)).toHaveLength(0);
+  });
+
   it('Rule engine supports toggling rules off and computes score/grade', () => {
     const allNegativeFindings = runRules(negativeModel);
     expect(allNegativeFindings).toHaveLength(0);
@@ -318,5 +344,73 @@ describe('Hardening Rules (CMP001 - CMP016)', () => {
         (f) => f.ruleId === 'CMP001' || f.ruleId === 'CMP002',
       ),
     ).toBe(false);
+  });
+});
+
+describe('applyFindingFix', () => {
+  it('applies scalar properties such as privileged: false to the target service', () => {
+    const yaml = `services:
+  web:
+    image: nginx
+    privileged: true
+`;
+    const finding = {
+      ruleId: 'CMP001',
+      title: 'Privileged container',
+      severity: 'critical' as const,
+      service: 'web',
+      line: 4,
+      description: '',
+      message: '',
+      fix: 'Disable privileged:\n```yaml\nservices:\n  web:\n    privileged: false\n```',
+      references: [],
+    };
+
+    const updated = applyFindingFix(yaml, finding);
+    expect(updated).not.toBeNull();
+    expect(updated).toContain('privileged: false');
+    expect(updated).toContain('image: nginx');
+  });
+
+  it('appends sequence items without duplicating existing items', () => {
+    const yaml = `services:
+  app:
+    image: node:20
+    cap_drop:
+      - NET_RAW
+`;
+    const finding = {
+      ruleId: 'CMP007',
+      title: 'Capabilities not dropped',
+      severity: 'low' as const,
+      service: 'app',
+      line: 1,
+      description: '',
+      message: '',
+      fix: 'Drop capabilities:\n```yaml\nservices:\n  app:\n    cap_drop:\n      - ALL\n```',
+      references: [],
+    };
+
+    const updated = applyFindingFix(yaml, finding);
+    expect(updated).not.toBeNull();
+    expect(updated).toContain('- NET_RAW');
+    expect(updated).toContain('- ALL');
+  });
+
+  it('returns null if finding has no valid yaml fix block', () => {
+    const yaml = 'services:\n  web:\n    image: nginx\n';
+    const finding = {
+      ruleId: 'CMP999',
+      title: 'No fix block',
+      severity: 'low' as const,
+      service: 'web',
+      line: 1,
+      description: '',
+      message: '',
+      fix: 'Just manual instructions without code block',
+      references: [],
+    };
+
+    expect(applyFindingFix(yaml, finding)).toBeNull();
   });
 });

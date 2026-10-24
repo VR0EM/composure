@@ -5,6 +5,7 @@ import {
   ComposeParseError,
   DiagramNodeData,
   Finding,
+  applyFindingFix,
   buildComposeGraph,
   compressYamlToHash,
   decompressYamlFromHash,
@@ -19,6 +20,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CloseIcon,
+  GitHubIcon,
   MoonIcon,
   SettingsGearIcon,
   SunIcon,
@@ -101,6 +103,55 @@ export function App() {
     window.addEventListener('mousedown', handleOutside);
     return () => window.removeEventListener('mousedown', handleOutside);
   }, [showExportMenu]);
+
+  // Global keyboard shortcuts (Esc, Cmd/Ctrl+O, Cmd/Ctrl+S, Cmd/Ctrl+B, Cmd/Ctrl+\)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMac =
+        typeof navigator !== 'undefined' &&
+        navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+
+      if (e.key === 'Escape') {
+        if (showSettingsDialog) {
+          setShowSettingsDialog(false);
+        } else if (showExportMenu) {
+          setShowExportMenu(false);
+        } else if (selectedNodeId) {
+          setSelectedNodeId(null);
+          setRightTab('findings');
+        }
+        return;
+      }
+
+      if (mod && (e.key === 'o' || e.key === 'O')) {
+        e.preventDefault();
+        fileInputRef.current?.click();
+        return;
+      }
+
+      if (mod && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        setShowExportMenu((prev) => !prev);
+        return;
+      }
+
+      if (mod && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        setLeftCollapsed((prev) => !prev);
+        return;
+      }
+
+      if (mod && e.key === '\\') {
+        e.preventDefault();
+        setRightCollapsed((prev) => !prev);
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showSettingsDialog, showExportMenu, selectedNodeId]);
 
   // Load shared YAML from URL hash on mount
   useEffect(() => {
@@ -278,6 +329,13 @@ export function App() {
     downloadTextFile(md, 'composure-security-report.md');
   };
 
+  const handleApplyFix = (finding: Finding) => {
+    const updatedYaml = applyFindingFix(yamlText, finding);
+    if (updatedYaml) {
+      setYamlText(updatedYaml);
+    }
+  };
+
   return (
     <div
       onDragOver={(e) => {
@@ -305,20 +363,41 @@ export function App() {
         </div>
       )}
 
-      {/* Header: Wordmark, Open, Share, Export Dropdown, Settings, Theme */}
+      {/* Header: Wordmark, Preset Switcher, Open, Share, Export Dropdown, GitHub, Settings, Theme */}
       <header className="h-11 border-b border-[var(--border-subtle)] px-4 flex items-center justify-between gap-3 shrink-0 bg-[var(--bg-panel)]">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-md bg-[var(--bg-elevated)] border border-[var(--border-strong)] flex items-center justify-center text-[var(--accent)] shadow-xs">
-            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-              <rect x="2" y="2" width="5" height="5" rx="1.2" />
-              <rect x="9" y="2" width="5" height="5" rx="1.2" fillOpacity="0.75" />
-              <rect x="2" y="9" width="5" height="5" rx="1.2" fillOpacity="0.75" />
-              <rect x="9" y="9" width="5" height="5" rx="1.2" fillOpacity="0.4" />
-            </svg>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 rounded-md bg-[var(--bg-elevated)] border border-[var(--border-strong)] flex items-center justify-center text-[var(--accent)] shadow-xs">
+              <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="2" y="2" width="5" height="5" rx="1.2" />
+                <rect x="9" y="2" width="5" height="5" rx="1.2" fillOpacity="0.75" />
+                <rect x="2" y="9" width="5" height="5" rx="1.2" fillOpacity="0.75" />
+                <rect x="9" y="9" width="5" height="5" rx="1.2" fillOpacity="0.4" />
+              </svg>
+            </div>
+            <span className="text-sm font-semibold tracking-tight text-[var(--text-primary)]">
+              Composure
+            </span>
           </div>
-          <span className="text-sm font-semibold tracking-tight text-[var(--text-primary)]">
-            Composure
-          </span>
+
+          {/* Direct Preset Stack Switcher */}
+          <div className="hidden sm:flex items-center">
+            <select
+              aria-label="Preset Compose Stack"
+              value={activeExampleId}
+              onChange={(e) => handleSelectExample(e.target.value)}
+              className="h-7 px-2 text-xs rounded bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)] hover:border-[var(--border-strong)] focus:outline-none focus:border-[var(--accent)] font-medium cursor-pointer transition-colors"
+            >
+              {COMPOSE_EXAMPLES.map((ex) => (
+                <option key={ex.id} value={ex.id}>
+                  {ex.label}
+                </option>
+              ))}
+              {activeExampleId === 'custom' && (
+                <option value="custom">Custom ({fileName})</option>
+              )}
+            </select>
+          </div>
         </div>
 
         {/* Mobile/Tablet (< 1024px) Tab Switcher */}
@@ -432,6 +511,18 @@ export function App() {
             )}
           </div>
 
+          {/* GitHub Repository Link */}
+          <a
+            href="https://github.com/VR0EM/composure"
+            target="_blank"
+            rel="noreferrer"
+            title="View Composure on GitHub"
+            aria-label="GitHub Repository"
+            className="h-7 w-7 inline-flex items-center justify-center rounded bg-[var(--bg-elevated)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors"
+          >
+            <GitHubIcon className="w-3.5 h-3.5" />
+          </a>
+
           {/* Settings Gear Button (Presets, Policy & About) */}
           <button
             type="button"
@@ -464,17 +555,24 @@ export function App() {
       <main className="flex-1 flex min-h-0 overflow-hidden select-text">
         {/* 1. Left Area: Editor (Collapsible to a thin rail on desktop) */}
         {leftCollapsed ? (
-          <aside className="hidden lg:flex w-9 border-r border-[var(--border-subtle)] bg-[var(--bg-panel)] flex-col items-center py-2.5 gap-3 shrink-0 select-none">
-            <button
-              type="button"
-              onClick={() => setLeftCollapsed(false)}
-              title="Expand YAML editor"
-              aria-label="Expand YAML editor"
-              className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]"
-            >
+          <aside
+            onClick={() => setLeftCollapsed(false)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setLeftCollapsed(false);
+              }
+            }}
+            title="Click anywhere to expand YAML editor (Cmd+B)"
+            aria-label="Expand YAML editor"
+            className="hidden lg:flex w-9 border-r border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-elevated)] cursor-pointer flex-col items-center py-2.5 gap-3 shrink-0 select-none transition-colors group"
+          >
+            <div className="p-1 rounded text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
               <ChevronRightIcon className="w-4 h-4" />
-            </button>
-            <span className="text-xs font-mono text-[var(--text-secondary)] [writing-mode:vertical-rl] rotate-180">
+            </div>
+            <span className="text-xs font-mono text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] [writing-mode:vertical-rl] rotate-180 transition-colors">
               {fileName}
             </span>
           </aside>
@@ -499,11 +597,12 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setLeftCollapsed(true)}
-                title="Collapse editor"
+                title="Collapse editor (Cmd+B)"
                 aria-label="Collapse editor"
-                className="hidden lg:inline-flex p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]"
+                className="hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] border border-transparent hover:border-[var(--border-subtle)] transition-colors cursor-pointer"
               >
                 <ChevronLeftIcon className="w-3.5 h-3.5" />
+                <span>Collapse</span>
               </button>
             </div>
 
@@ -561,17 +660,24 @@ export function App() {
 
         {/* 3. Right Area: Single Panel (~380px wide, collapsible) with "Findings" and "Details" tabs */}
         {rightCollapsed ? (
-          <aside className="hidden lg:flex w-9 border-l border-[var(--border-subtle)] bg-[var(--bg-panel)] flex-col items-center py-2.5 gap-3 shrink-0 select-none">
-            <button
-              type="button"
-              onClick={() => setRightCollapsed(false)}
-              title="Expand right panel"
-              aria-label="Expand right panel"
-              className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]"
-            >
+          <aside
+            onClick={() => setRightCollapsed(false)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setRightCollapsed(false);
+              }
+            }}
+            title="Click anywhere to expand findings & details panel (Cmd+\)"
+            aria-label="Expand findings and details panel"
+            className="hidden lg:flex w-9 border-l border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-elevated)] cursor-pointer flex-col items-center py-2.5 gap-3 shrink-0 select-none transition-colors group"
+          >
+            <div className="p-1 rounded text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
               <ChevronLeftIcon className="w-4 h-4" />
-            </button>
-            <span className="text-xs text-[var(--text-secondary)] [writing-mode:vertical-rl]">
+            </div>
+            <span className="text-xs text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] [writing-mode:vertical-rl] transition-colors">
               Findings ({findings.length})
             </span>
           </aside>
@@ -620,10 +726,11 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setRightCollapsed(true)}
-                title="Collapse panel"
+                title="Collapse panel (Cmd+\)"
                 aria-label="Collapse panel"
-                className="hidden lg:inline-flex p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]"
+                className="hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] border border-transparent hover:border-[var(--border-subtle)] transition-colors cursor-pointer"
               >
+                <span>Collapse</span>
                 <ChevronRightIcon className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -635,6 +742,7 @@ export function App() {
                   findings={findings}
                   onToggleRule={handleToggleRule}
                   onSelectFinding={handleSelectFinding}
+                  onApplyFix={handleApplyFix}
                 />
               ) : (
                 <NodeDetailsPanel

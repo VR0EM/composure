@@ -12,6 +12,7 @@ interface FindingsPanelProps {
   findings: Finding[];
   onToggleRule: (ruleId: string) => void;
   onSelectFinding: (finding: Finding) => void;
+  onApplyFix?: (finding: Finding) => void;
 }
 
 export const SEVERITY_DOT_COLORS: Record<Severity, string> = {
@@ -126,6 +127,7 @@ export function FindingsPanel({
   findings,
   onToggleRule,
   onSelectFinding,
+  onApplyFix,
 }: FindingsPanelProps) {
   const [groupBy, setGroupBy] = useState<'severity' | 'service'>('severity');
   // Info hidden by default
@@ -328,6 +330,7 @@ export function FindingsPanel({
                           }}
                           onSelectFinding={onSelectFinding}
                           onDisableRule={() => onToggleRule(ruleGroup.ruleId)}
+                          onApplyFix={onApplyFix}
                         />
                       );
                     })}
@@ -379,6 +382,7 @@ export function FindingsPanel({
                             );
                           }}
                           onDisableRule={() => onToggleRule(finding.ruleId)}
+                          onApplyFix={onApplyFix}
                         />
                       );
                     })}
@@ -399,12 +403,14 @@ function CompactRuleGroupRow({
   onToggleExpand,
   onSelectFinding,
   onDisableRule,
+  onApplyFix,
 }: {
   ruleGroup: RuleFindingGroup;
   isExpanded: boolean;
   onToggleExpand: () => void;
   onSelectFinding: (finding: Finding) => void;
   onDisableRule: () => void;
+  onApplyFix?: (finding: Finding) => void;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const activeFinding =
@@ -475,6 +481,7 @@ function CompactRuleGroupRow({
           <FindingExpandedContent
             finding={activeFinding}
             onDisableRule={onDisableRule}
+            onApplyFix={onApplyFix}
           />
         </div>
       )}
@@ -487,11 +494,13 @@ function CompactFindingRow({
   isExpanded,
   onToggleExpand,
   onDisableRule,
+  onApplyFix,
 }: {
   finding: Finding;
   isExpanded: boolean;
   onToggleExpand: () => void;
   onDisableRule: () => void;
+  onApplyFix?: (finding: Finding) => void;
 }) {
   return (
     <div className="text-xs">
@@ -525,6 +534,7 @@ function CompactFindingRow({
           <FindingExpandedContent
             finding={finding}
             onDisableRule={onDisableRule}
+            onApplyFix={onApplyFix}
           />
         </div>
       )}
@@ -535,11 +545,14 @@ function CompactFindingRow({
 function FindingExpandedContent({
   finding,
   onDisableRule,
+  onApplyFix,
 }: {
   finding: Finding;
   onDisableRule: () => void;
+  onApplyFix?: (finding: Finding) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [applied, setApplied] = useState(false);
   const { text: fixText, yamlCode } = parseFixContent(finding.fix);
 
   const handleCopyYaml = (e: React.MouseEvent) => {
@@ -548,6 +561,14 @@ function FindingExpandedContent({
     navigator.clipboard?.writeText(yamlCode);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleApplyFix = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onApplyFix) return;
+    onApplyFix(finding);
+    setApplied(true);
+    window.setTimeout(() => setApplied(false), 1500);
   };
 
   const explanation = formatFindingExplanation(finding);
@@ -566,13 +587,25 @@ function FindingExpandedContent({
             </span>
           )}
           {yamlCode && (
-            <button
-              type="button"
-              onClick={handleCopyYaml}
-              className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline shrink-0"
-            >
-              {copied ? 'Copied' : 'Copy YAML'}
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              {onApplyFix && (
+                <button
+                  type="button"
+                  onClick={handleApplyFix}
+                  className="text-xs px-2 py-0.5 rounded bg-[var(--accent-bg)] text-[var(--accent)] font-medium hover:opacity-90 transition-opacity"
+                  title="Apply remediation YAML directly to compose file"
+                >
+                  {applied ? 'Applied!' : 'Apply Fix'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleCopyYaml}
+                className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline"
+              >
+                {copied ? 'Copied' : 'Copy YAML'}
+              </button>
+            </div>
           )}
         </div>
 

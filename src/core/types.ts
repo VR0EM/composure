@@ -127,6 +127,13 @@ export interface ResourceLimits extends SourceLocation {
   cpusLine?: number;
 }
 
+export interface LoggingConfig extends SourceLocation {
+  /** Logging driver name, e.g. "json-file", "local", "syslog", "none" */
+  driver?: string;
+  /** Driver options, e.g. max-size, max-file */
+  options?: Record<string, string>;
+}
+
 export interface BuildConfig extends SourceLocation {
   context?: string;
   dockerfile?: string;
@@ -171,6 +178,8 @@ export interface NormalizedService extends SourceLocation {
   devicesLine?: number;
   healthcheck?: HealthcheckConfig;
   resourceLimits?: ResourceLimits;
+  logging?: LoggingConfig;
+  loggingLine?: number;
   /** Line numbers for top-level keys defined on this service */
   fieldLines: Record<string, number>;
 }

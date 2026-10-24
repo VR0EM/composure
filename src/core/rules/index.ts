@@ -15,6 +15,8 @@ import { CMP013 } from './CMP013-no-user';
 import { CMP014 } from './CMP014-resource-limits';
 import { CMP015 } from './CMP015-no-healthcheck';
 import { CMP016 } from './CMP016-read-only-rootfs';
+import { CMP017 } from './CMP017-logging-max-size';
+import { CMP018 } from './CMP018-default-bridge-network';
 
 export {
   CMP001,
@@ -33,6 +35,8 @@ export {
   CMP014,
   CMP015,
   CMP016,
+  CMP017,
+  CMP018,
 };
 
 export const ALL_RULES: Rule[] = [
@@ -52,4 +56,6 @@ export const ALL_RULES: Rule[] = [
   CMP014,
   CMP015,
   CMP016,
+  CMP017,
+  CMP018,
 ];

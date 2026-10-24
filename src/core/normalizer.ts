@@ -18,6 +18,7 @@ import {
   ExposePort,
   HealthcheckConfig,
   LocatedString,
+  LoggingConfig,
   NormalizedNetwork,
   NormalizedService,
   NormalizedVolume,
@@ -1074,6 +1075,46 @@ function normalizeResourceLimits(
   };
 }
 
+function normalizeLogging(
+  pair: Pair,
+  doc: Document,
+  lineCounter: LineCounter,
+  fallbackLine: number,
+): LoggingConfig | undefined {
+  const resolved = resolveAstNode(pair.value, doc);
+  if (!isMap(resolved)) return undefined;
+
+  const loc = getNodeLocation(pair, lineCounter, fallbackLine);
+  const fields = getMapFieldMap(resolved, doc);
+
+  const driver =
+    scalarToString(resolveAstNode(fields.get('driver')?.value, doc)) ??
+    undefined;
+
+  const optionsPair = fields.get('options');
+  let options: Record<string, string> | undefined;
+
+  if (optionsPair) {
+    const optsResolved = resolveAstNode(optionsPair.value, doc);
+    if (isMap(optsResolved)) {
+      options = {};
+      const optFields = getMapFieldMap(optsResolved, doc);
+      for (const [k, p] of optFields.entries()) {
+        const strVal = scalarToString(resolveAstNode(p.value, doc));
+        if (strVal !== null) {
+          options[k] = strVal;
+        }
+      }
+    }
+  }
+
+  return {
+    ...loc,
+    ...(driver !== undefined ? { driver } : {}),
+    ...(options !== undefined ? { options } : {}),
+  };
+}
+
 function normalizeBuild(
   pair: Pair,
   doc: Document,
@@ -1469,6 +1510,19 @@ export function normalizeComposeDocument(
       serviceLoc.line,
     );
 
+    const loggingPair = sFields.get('logging');
+    const logging = loggingPair
+      ? normalizeLogging(
+          loggingPair,
+          doc,
+          lineCounter,
+          serviceLoc.line,
+        )
+      : undefined;
+    const loggingLine = sFields.has('logging')
+      ? fieldLines['logging']
+      : undefined;
+
     services[serviceName] = {
       ...serviceLoc,
       name: serviceName,
@@ -1509,6 +1563,8 @@ export function normalizeComposeDocument(
       ...(devicesLine !== undefined ? { devicesLine } : {}),
       ...(healthcheck !== undefined ? { healthcheck } : {}),
       ...(resourceLimits !== undefined ? { resourceLimits } : {}),
+      ...(logging !== undefined ? { logging } : {}),
+      ...(loggingLine !== undefined ? { loggingLine } : {}),
       fieldLines,
     };
   }
