@@ -27,6 +27,15 @@ export const SEVERITY_PENALTY: Record<Severity, number> = {
   info: 0,
 };
 
+/** How much a service counts as "weak" in a category, by its worst finding there. */
+export const CATEGORY_SEVERITY_WEIGHT: Record<Severity, number> = {
+  critical: 1,
+  high: 0.7,
+  medium: 0.4,
+  low: 0.15,
+  info: 0,
+};
+
 /** Highest score reachable while a finding of this severity is open. */
 export const SEVERITY_SCORE_CAP: Partial<Record<Severity, number>> = {
   critical: 59, // at best a D
@@ -169,24 +178,25 @@ export function calculateSecurityScore(
     }
   }
 
-  // Category breakdown: same per-service model, restricted to one category
+  // Category breakdown: the share of services without issues in that area,
+  // weighted by each service's worst finding there.
   const serviceNames = Array.from(penalties.keys());
   const categoryScores = {} as Record<RuleCategory, CategoryScore>;
   for (const category of CATEGORY_ORDER) {
     const inCategory = findings.filter((f) => RULES_BY_ID.get(f.ruleId)?.category === category);
-    const perService = new Map<string, number>(serviceNames.map((n) => [n, 0]));
-    let worstRank = 0;
+    const worstPerService = new Map<string, number>();
     let worst: Severity | 'none' = 'none';
     for (const f of inCategory) {
-      perService.set(f.service, (perService.get(f.service) ?? 0) + SEVERITY_PENALTY[f.severity]);
-      const rank = SEVERITY_ORDER.length - SEVERITY_ORDER.indexOf(f.severity);
-      if (rank > worstRank) {
-        worstRank = rank;
+      const weight = CATEGORY_SEVERITY_WEIGHT[f.severity];
+      worstPerService.set(f.service, Math.max(worstPerService.get(f.service) ?? 0, weight));
+      if (worst === 'none' || SEVERITY_ORDER.indexOf(f.severity) < SEVERITY_ORDER.indexOf(worst)) {
         worst = f.severity;
       }
     }
+    const affected = Array.from(worstPerService.values()).reduce((a, b) => a + b, 0);
+    const total = Math.max(1, serviceNames.length);
     categoryScores[category] = {
-      score: combineServiceScores(Array.from(perService.values()).map((p) => Math.max(0, 100 - p))),
+      score: Math.round(100 * (1 - Math.min(1, affected / total))),
       findings: inCategory.length,
       worst,
     };

@@ -1,3 +1,4 @@
+import { CATEGORY_LABELS, CATEGORY_ORDER } from './categories';
 import {
   SEVERITY_ORDER,
   SecurityScoreSummary,
@@ -55,6 +56,16 @@ export function generateFindingsMarkdown(
   lines.push('| :--- | ---: |');
   for (const sev of SEVERITY_ORDER) {
     lines.push(`| **${sev.toUpperCase()}** | ${summary.countsBySeverity[sev]} |`);
+  }
+  lines.push('');
+
+  lines.push('## Score by Area');
+  lines.push('');
+  lines.push('| Area | Score | Findings |');
+  lines.push('| :--- | ---: | ---: |');
+  for (const category of CATEGORY_ORDER) {
+    const cat = summary.categoryScores[category];
+    lines.push(`| ${CATEGORY_LABELS[category]} | ${cat.score} | ${cat.findings} |`);
   }
   lines.push('');
 

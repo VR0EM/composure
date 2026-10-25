@@ -42,8 +42,11 @@ export function parseCompose(yamlText: string): ParseResult {
           ? lineCounter.linePos(err.pos[1])
           : startPos);
 
-      // Strip redundant "at line X, column Y" suffix from yaml error message if needed, or keep concise
-      const cleanMessage = (err.message.split('\n')[0] ?? err.message).trim();
+      // The line and column are shown next to the message, so drop the "at line X, column Y" suffix
+      const cleanMessage = (err.message.split('\n')[0] ?? err.message)
+        .replace(/\s*at line \d+, column \d+:?\s*$/, '')
+        .trim()
+        .replace(/^./, (c) => c.toUpperCase());
 
       return {
         message: cleanMessage,

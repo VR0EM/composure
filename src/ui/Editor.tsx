@@ -152,8 +152,9 @@ const flashLineField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+// Recompute on document changes too, or decorations would point past the end of an edited doc
 const errorLineDecorations = EditorView.decorations.compute(
-  [markersField],
+  ['doc', markersField],
   (state) => {
     const markers = state.field(markersField);
     const errorLines = new Set<number>();

@@ -6,167 +6,188 @@
   --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+/*
+ * Design tokens. Neutral surfaces, ink (near-black / near-white) for actions
+ * and selection, and color reserved for meaning: severity, status, and the
+ * node types in the diagram. Each theme is composed on its own, not inverted.
+ */
 :root,
 [data-theme="dark"] {
-  /* Base surfaces & borders */
-  --bg-app: #121212;
-  --bg-panel: #181818;
-  --bg-elevated: #202020;
-  --bg-subtle: #282828;
-  --border-subtle: #262626;
-  --border-strong: #383838;
-  --border-hover: #6e6e6e;
-  --node-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.25);
+  /* Surfaces */
+  --bg-app: #121211;
+  --bg-canvas: #121211;
+  --bg-panel: #181817;
+  --bg-elevated: #20201e;
+  --bg-subtle: #2a2a28;
+  --border-subtle: #272725;
+  --border-strong: #383835;
+  --border-hover: #5f5e5a;
+  --node-shadow: 0 1px 2px rgb(0 0 0 / 0.45), 0 4px 14px rgb(0 0 0 / 0.25);
+  --overlay: rgb(0 0 0 / 0.6);
 
-  /* Text hierarchy (all >= 4.5:1 on surfaces) */
-  --text-primary: #f5f5f5;
-  --text-secondary: #a3a3a3;
-  --text-muted: #8f8f8f;
+  /* Text */
+  --text-primary: #ededeb;
+  --text-secondary: #a8a7a2;
+  --text-muted: #8d8c87;
 
-  /* Single teal accent (active tabs, selected node, focus, primary button, links) */
-  --accent: #2dd4bf;
-  --accent-bg: #1a2725;
-  --accent-fg: #0c1715;
+  /* Ink: primary actions, selection, focus */
+  --accent: #ededeb;
+  --accent-bg: #2c2c2a;
+  --accent-fg: #121211;
+  --focus-ring: #ededeb;
 
-  /* Severity roles */
-  --sev-critical-fg: #f87171;
-  --sev-critical-border: #ef4444;
-  --sev-critical-group-bg: #291c1c;
-  --sev-critical-chip-bg: #381f1f;
+  /* Status */
+  --success: #2fbf71;
+  --success-fg: #5fd394;
+  --success-bg: #14261c;
 
-  --sev-high-fg: #fb923c;
-  --sev-high-border: #f97316;
-  --sev-high-group-bg: #2a1f18;
-  --sev-high-chip-bg: #3a2618;
+  /* Severity: solid (dots, bars, borders), fg (text), group/chip (subtle tints) */
+  --sev-critical-border: #f04438;
+  --sev-critical-fg: #f97066;
+  --sev-critical-group-bg: #2a1716;
+  --sev-critical-chip-bg: #3a1c1a;
 
-  --sev-medium-fg: #fbbf24;
-  --sev-medium-border: #f59e0b;
-  --sev-medium-group-bg: #2a2317;
-  --sev-medium-chip-bg: #392c16;
+  --sev-high-border: #fb6c1c;
+  --sev-high-fg: #fd8a4a;
+  --sev-high-group-bg: #2a1b13;
+  --sev-high-chip-bg: #3a2216;
 
-  --sev-low-fg: #60a5fa;
-  --sev-low-border: #3b82f6;
-  --sev-low-group-bg: #1b202a;
-  --sev-low-chip-bg: #1d2839;
+  --sev-medium-border: #e8a90b;
+  --sev-medium-fg: #f5c033;
+  --sev-medium-group-bg: #282112;
+  --sev-medium-chip-bg: #362c14;
 
-  --sev-info-fg: #a3a3a3;
-  --sev-info-border: #737373;
-  --sev-info-group-bg: #1f1f1f;
-  --sev-info-chip-bg: #262626;
+  --sev-low-border: #5b8def;
+  --sev-low-fg: #8aaef5;
+  --sev-low-group-bg: #161d2b;
+  --sev-low-chip-bg: #1b2538;
 
-  /* Diagram node & edge type roles (~8% tinted fill on #181818, 1px border, matching edge hue) */
-  --node-service-bg: #181818;
-  --node-service-border: #383838;
-  --edge-depends: #8f8f8f;
+  --sev-info-border: #6f6e6a;
+  --sev-info-fg: #a8a7a2;
+  --sev-info-group-bg: #1e1e1c;
+  --sev-info-chip-bg: #262624;
 
-  --node-network-bg: #23212a;
-  --node-network-border: #a78bfa;
-  --node-network-fg: #c4b5fd;
+  /* Diagram node types */
+  --node-service-bg: #1b1b1a;
+  --node-service-border: #3a3a37;
+  --edge-depends: #7d7c77;
 
-  --node-volume-bg: #1a2722;
-  --node-volume-border: #34d399;
-  --node-volume-fg: #6ee7b7;
+  --node-network-bg: #1f1c2c;
+  --node-network-border: #9b86f7;
+  --node-network-fg: #b9a9fa;
 
-  --node-bind-bg: #272521;
-  --node-bind-border: #d6b88a;
-  --node-bind-fg: #e5ceb0;
+  --node-volume-bg: #15241c;
+  --node-volume-border: #3cc384;
+  --node-volume-fg: #6ed7a3;
 
-  --node-port-bg: #2a1f25;
-  --node-port-border: #f472b6;
-  --node-port-fg: #f9a8d4;
+  --node-bind-bg: #26201a;
+  --node-bind-border: #c9965d;
+  --node-bind-fg: #ddb383;
 
-  --canvas-dot: #282828;
+  --node-port-bg: #2a1823;
+  --node-port-border: #e8689f;
+  --node-port-fg: #f191bb;
 
-  /* Editor tokens */
-  --editor-selection: #2a3836;
-  --editor-line-highlight: #1f2e2c;
-  --syntax-key: #e5e5e5;
-  --syntax-string: #6ee7b7;
-  --syntax-number: #fbbf24;
-  --syntax-comment: #8f8f8f;
-  --syntax-anchor: #c4b5fd;
+  --canvas-dot: #2a2a28;
+
+  /* Editor */
+  --editor-selection: #34342f;
+  --editor-line-highlight: #23231f;
+  --syntax-key: #e2e1dd;
+  --syntax-string: #7fd1a6;
+  --syntax-number: #f0c060;
+  --syntax-comment: #85847f;
+  --syntax-anchor: #b9a9fa;
 
   color-scheme: dark;
 }
 
 [data-theme="light"] {
-  /* Base surfaces & borders */
-  --bg-app: #f5f5f5;
+  /* Surfaces: white panels on a slightly darker canvas, visible hairlines */
+  --bg-app: #f1f1ef;
+  --bg-canvas: #f1f1ef;
   --bg-panel: #ffffff;
-  --bg-elevated: #ededed;
-  --bg-subtle: #e5e5e5;
-  --border-subtle: #e5e5e5;
-  --border-strong: #cccccc;
-  --border-hover: #858585;
-  --node-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 4px 12px rgb(0 0 0 / 0.05);
+  --bg-elevated: #f5f5f3;
+  --bg-subtle: #e9e9e6;
+  --border-subtle: #e5e4e0;
+  --border-strong: #d2d1cc;
+  --border-hover: #9c9b95;
+  --node-shadow: 0 1px 2px rgb(24 24 20 / 0.06), 0 3px 10px rgb(24 24 20 / 0.05);
+  --overlay: rgb(24 24 20 / 0.35);
 
-  /* Text hierarchy (all >= 4.5:1 on surfaces) */
-  --text-primary: #171717;
-  --text-secondary: #525252;
-  --text-muted: #5c5c5c;
+  /* Text */
+  --text-primary: #18181a;
+  --text-secondary: #4f4e49;
+  --text-muted: #6b6a64;
 
-  /* Single teal accent (darkened for >= 4.5:1 contrast on light surfaces) */
-  --accent: #0b645d;
-  --accent-bg: #e2ecec;
+  /* Ink */
+  --accent: #18181a;
+  --accent-bg: #ebebe8;
   --accent-fg: #ffffff;
+  --focus-ring: #18181a;
 
-  /* Severity roles (all darkened for >= 4.5:1 contrast on light surfaces & tinted chips) */
-  --sev-critical-fg: #991b1b;
-  --sev-critical-border: #dc2626;
-  --sev-critical-group-bg: #faefef;
-  --sev-critical-chip-bg: #f7e4e4;
+  /* Status */
+  --success: #16a35a;
+  --success-fg: #0b7a41;
+  --success-bg: #eaf7ef;
 
-  --sev-high-fg: #9a3412;
-  --sev-high-border: #ea580c;
-  --sev-high-group-bg: #fbf2ee;
-  --sev-high-chip-bg: #f8e8e2;
+  /* Severity */
+  --sev-critical-border: #d92d20;
+  --sev-critical-fg: #b42318;
+  --sev-critical-group-bg: #fdf1f0;
+  --sev-critical-chip-bg: #fbe3e1;
 
-  --sev-medium-fg: #92400e;
-  --sev-medium-border: #d97706;
-  --sev-medium-group-bg: #faf3ee;
-  --sev-medium-chip-bg: #f6eae1;
+  --sev-high-border: #ec6a1e;
+  --sev-high-fg: #b54210;
+  --sev-high-group-bg: #fdf3ec;
+  --sev-high-chip-bg: #fbe6d8;
 
-  --sev-low-fg: #1e40af;
-  --sev-low-border: #2563eb;
-  --sev-low-group-bg: #eff3fc;
-  --sev-low-chip-bg: #e4eafa;
+  --sev-medium-border: #d99a06;
+  --sev-medium-fg: #8a5800;
+  --sev-medium-group-bg: #fdf7e8;
+  --sev-medium-chip-bg: #f9ecc8;
 
-  --sev-info-fg: #525252;
-  --sev-info-border: #737373;
-  --sev-info-group-bg: #f3f3f3;
-  --sev-info-chip-bg: #eaeaea;
+  --sev-low-border: #3e74e0;
+  --sev-low-fg: #1f4fb4;
+  --sev-low-group-bg: #eef3fd;
+  --sev-low-chip-bg: #dfe8fb;
 
-  /* Diagram node & edge type roles (~7-8% tinted fill on #ffffff, 1px border, matching edge hue) */
+  --sev-info-border: #a3a29c;
+  --sev-info-fg: #5f5e58;
+  --sev-info-group-bg: #f4f4f2;
+  --sev-info-chip-bg: #eaeae7;
+
+  /* Diagram node types: clear hue per type, tinted fill, saturated border */
   --node-service-bg: #ffffff;
-  --node-service-border: #cccccc;
-  --edge-depends: #666666;
+  --node-service-border: #cfcec9;
+  --edge-depends: #8a8983;
 
-  --node-network-bg: #f5f0fc;
-  --node-network-border: #6d28d9;
-  --node-network-fg: #5b21b6;
+  --node-network-bg: #f4f1ff;
+  --node-network-border: #7a5af8;
+  --node-network-fg: #5a34d6;
 
-  --node-volume-bg: #edf6f3;
-  --node-volume-border: #047857;
-  --node-volume-fg: #065f46;
+  --node-volume-bg: #eaf8f0;
+  --node-volume-border: #1f9d5c;
+  --node-volume-fg: #0d6b3c;
 
-  --node-bind-bg: #f6f2ef;
-  --node-bind-border: #8c6239;
-  --node-bind-fg: #6b4c2b;
+  --node-bind-bg: #faf2e8;
+  --node-bind-border: #b0762f;
+  --node-bind-fg: #84531a;
 
-  --node-port-bg: #faeff4;
-  --node-port-border: #be185d;
-  --node-port-fg: #9d174d;
+  --node-port-bg: #fdeff5;
+  --node-port-border: #d4407f;
+  --node-port-fg: #a51f5a;
 
-  --canvas-dot: #d4d4d4;
+  --canvas-dot: #d6d5d0;
 
-  /* Editor tokens */
-  --editor-selection: #d5e8e6;
-  --editor-line-highlight: #e6f2f1;
-  --syntax-key: #171717;
-  --syntax-string: #065f46;
-  --syntax-number: #92400e;
-  --syntax-comment: #5c5c5c;
-  --syntax-anchor: #5b21b6;
+  /* Editor */
+  --editor-selection: #dcdcd6;
+  --editor-line-highlight: #f0efe9;
+  --syntax-key: #18181a;
+  --syntax-string: #0d6b3c;
+  --syntax-number: #9a5b00;
+  --syntax-comment: #75746e;
+  --syntax-anchor: #5a34d6;
 
   color-scheme: light;
 }
@@ -178,11 +199,38 @@ body {
   font-family: var(--font-sans);
   font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Browser surfaces carry the design too */
+::selection {
+  background: var(--editor-selection);
+  color: var(--text-primary);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+input,
+textarea {
+  caret-color: var(--text-primary);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -191,27 +239,40 @@ body {
 
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 3px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background: var(--border-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 /* Diagram focus: dim everything not connected to the selected or hovered node */
 .react-flow__node.is-dimmed {
-  opacity: 0.35;
+  opacity: 0.32;
 }
 
 .react-flow__edge.is-dimmed {
-  opacity: 0.18;
+  opacity: 0.15;
 }
 
 .react-flow__node,
 .react-flow__edge {
-  transition: opacity 120ms ease;
+  transition: opacity 150ms ease-out;
 }
 
 .react-flow__node:focus-visible {
   outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

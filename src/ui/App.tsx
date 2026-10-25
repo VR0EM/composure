@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ALL_RULES,
   AnalysisResult,
@@ -16,30 +16,29 @@ import {
 } from '../core';
 import { ComposeEditor, EditorHandle } from './Editor';
 import { FindingsPanel } from './FindingsPanel';
+import { FixAllDialog } from './FixAllDialog';
 import { FixPreviewDialog } from './FixPreviewDialog';
 import { ProblemsPanel } from './ProblemsPanel';
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  CloseIcon,
   GitHubIcon,
   MoonIcon,
   SettingsGearIcon,
   SunIcon,
 } from './Icons';
 import { NodeDetailsPanel } from './NodeDetailsPanel';
+import { ProjectOverview } from './ProjectOverview';
+import { SettingsDialog } from './SettingsDialog';
+import { Button, IconButton } from './primitives';
 import { DEFAULT_COMPOSE_YAML } from './defaultCompose';
 import { ComposeDiagram } from './diagram/ComposeDiagram';
 import { COMPOSE_EXAMPLES } from './examples';
-import {
-  downloadTextFile,
-  exportDiagramAsPng,
-  exportDiagramAsSvg,
-} from './exportDiagram';
+import { downloadTextFile, exportDiagramAsPng, exportDiagramAsSvg } from './exportDiagram';
 
 type MobileTab = 'editor' | 'diagram' | 'findings';
-type RightPanelTab = 'findings' | 'problems' | 'details';
+type RightPanelTab = 'findings' | 'problems' | 'overview';
 type OkAnalysis = Extract<AnalysisResult, { ok: true }>;
 
 // Stable empty lists, so the editor does not re-render markers on every render
@@ -117,38 +116,106 @@ function getInitialDisabledRules(): Set<string> {
   return new Set();
 }
 
+function readFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => (typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('read')));
+    reader.onerror = () => reject(reader.error ?? new Error('read'));
+    reader.readAsText(file);
+  });
+}
+
+const MAX_FILE_BYTES = 2 * 1024 * 1024;
+
+function LogoMark({ className = '' }: { className?: string }) {
+  // Two services joined by a link: a Compose file, drawn as its diagram
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+      <rect x="2.5" y="2.5" width="7" height="7" rx="2" fill="currentColor" />
+      <rect x="10.5" y="10.5" width="7" height="7" rx="2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M9.5 6h2.5a2 2 0 0 1 2 2v2.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MenuItem({ onClick, children, hint }: { onClick: () => void; children: ReactNode; hint?: string }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="w-full px-3 h-8 flex items-center justify-between gap-4 text-left text-[13px] text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] focus-visible:bg-[var(--bg-elevated)] focus-visible:outline-none"
+    >
+      <span>{children}</span>
+      {hint && <span className="text-xs text-[var(--text-muted)]">{hint}</span>}
+    </button>
+  );
+}
+
+function PanelTab({
+  active,
+  onClick,
+  children,
+  count,
+  countTone = 'muted',
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+  count?: number;
+  countTone?: 'muted' | 'error';
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`relative h-full inline-flex items-center gap-1.5 text-[13px] transition-colors ${
+        active
+          ? 'text-[var(--text-primary)] font-medium'
+          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+      }`}
+    >
+      {children}
+      {count !== undefined && (
+        <span
+          className={`text-xs tabular ${
+            countTone === 'error' ? 'text-[var(--sev-critical-fg)]' : 'text-[var(--text-muted)]'
+          }`}
+        >
+          {count}
+        </span>
+      )}
+      {active && <span className="absolute left-0 right-0 -bottom-px h-[2px] rounded-full bg-[var(--accent)]" />}
+    </button>
+  );
+}
+
 export function App() {
   const [initialDraft] = useState(getInitialDraft);
   const [yamlText, setYamlText] = useState<string>(initialDraft.yaml);
   const [activeExampleId, setActiveExampleId] = useState<string>(initialDraft.exampleId);
   const [fileName, setFileName] = useState<string>(initialDraft.fileName);
   const [disabledRuleIds, setDisabledRuleIds] = useState<Set<string>>(getInitialDisabledRules);
-  const [initialAnalysis] = useState(() =>
-    analyzeCompose(initialDraft.yaml, { disabledRuleIds }),
-  );
-  const [analysis, setAnalysis] = useState<OkAnalysis | null>(
-    initialAnalysis.ok ? initialAnalysis : null,
-  );
+  const [initialAnalysis] = useState(() => analyzeCompose(initialDraft.yaml, { disabledRuleIds }));
+  const [analysis, setAnalysis] = useState<OkAnalysis | null>(initialAnalysis.ok ? initialAnalysis : null);
   const [parseErrors, setParseErrors] = useState<ComposeParseError[]>(
     initialAnalysis.ok ? [] : initialAnalysis.errors,
   );
-  const [fixPreview, setFixPreview] = useState<{
-    finding: Finding;
-    before: string;
-    after: string;
-  } | null>(null);
+  const [fixPreview, setFixPreview] = useState<{ finding: Finding; before: string; after: string } | null>(null);
+  const [showFixAll, setShowFixAll] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [rightTab, setRightTab] = useState<RightPanelTab>('findings');
-  const [leftCollapsed, setLeftCollapsed] = useState<boolean>(false);
-  const [rightCollapsed, setRightCollapsed] = useState<boolean>(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>('diagram');
-
   const [theme, setTheme] = useState<'dark' | 'light'>(getInitialTheme);
-  const [isDraggingFile, setIsDraggingFile] = useState<boolean>(false);
-  const [shareCopied, setShareCopied] = useState<boolean>(false);
-  const [showExportMenu, setShowExportMenu] = useState<boolean>(false);
-  const [showSettingsDialog, setShowSettingsDialog] = useState<boolean>(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const editorRef = useRef<EditorHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -166,32 +233,23 @@ export function App() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      writeStorage(
-        STORAGE_KEYS.draft,
-        JSON.stringify({ yaml: yamlText, fileName, exampleId: activeExampleId }),
-      );
+      writeStorage(STORAGE_KEYS.draft, JSON.stringify({ yaml: yamlText, fileName, exampleId: activeExampleId }));
     }, 500);
     return () => window.clearTimeout(timer);
   }, [yamlText, fileName, activeExampleId]);
 
-  const showToast = useCallback((message: string) => {
-    setToast(message);
-  }, []);
+  const showToast = useCallback((message: string) => setToast(message), []);
 
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 3200);
+    const timer = window.setTimeout(() => setToast(null), 3600);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  // Close export menu on outside click
   useEffect(() => {
     if (!showExportMenu) return;
     const handleOutside = (e: MouseEvent) => {
-      if (
-        exportMenuRef.current &&
-        !exportMenuRef.current.contains(e.target as Node)
-      ) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
         setShowExportMenu(false);
       }
     };
@@ -199,56 +257,40 @@ export function App() {
     return () => window.removeEventListener('mousedown', handleOutside);
   }, [showExportMenu]);
 
-  // Global keyboard shortcuts (Esc, Cmd/Ctrl+O, Cmd/Ctrl+S, Cmd/Ctrl+B, Cmd/Ctrl+\)
+  const dialogOpen = fixPreview !== null || showFixAll || showSettings;
+
+  // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const isMac =
-        typeof navigator !== 'undefined' &&
-        navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const isMac = /mac/i.test(navigator.userAgent);
       const mod = isMac ? e.metaKey : e.ctrlKey;
 
       if (e.key === 'Escape') {
-        if (fixPreview) {
-          setFixPreview(null);
-        } else if (showSettingsDialog) {
-          setShowSettingsDialog(false);
-        } else if (showExportMenu) {
-          setShowExportMenu(false);
-        } else if (selectedNodeId) {
-          setSelectedNodeId(null);
-          setRightTab('findings');
-        }
+        if (dialogOpen) return; // dialogs handle their own Escape
+        if (showExportMenu) setShowExportMenu(false);
+        else if (selectedNodeId) setSelectedNodeId(null);
         return;
       }
+      if (dialogOpen) return;
 
-      if (mod && (e.key === 'o' || e.key === 'O')) {
+      const key = e.key.toLowerCase();
+      if (mod && key === 'o') {
         e.preventDefault();
         fileInputRef.current?.click();
-        return;
-      }
-
-      if (mod && (e.key === 's' || e.key === 'S')) {
+      } else if (mod && key === 's') {
         e.preventDefault();
         setShowExportMenu((prev) => !prev);
-        return;
-      }
-
-      if (mod && (e.key === 'b' || e.key === 'B')) {
+      } else if (mod && key === 'b') {
         e.preventDefault();
         setLeftCollapsed((prev) => !prev);
-        return;
-      }
-
-      if (mod && e.key === '\\') {
+      } else if (mod && e.key === '\\') {
         e.preventDefault();
         setRightCollapsed((prev) => !prev);
-        return;
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showSettingsDialog, showExportMenu, selectedNodeId, fixPreview]);
+  }, [dialogOpen, showExportMenu, selectedNodeId]);
 
   // Load shared YAML from the URL hash (on start and when the hash changes)
   const sharedTextRef = useRef<string | null>(null);
@@ -285,6 +327,13 @@ export function App() {
     }
   }, [yamlText]);
 
+  // Once an example is edited it is the user's own file
+  useEffect(() => {
+    if (activeExampleId === 'custom') return;
+    const example = COMPOSE_EXAMPLES.find((e) => e.id === activeExampleId);
+    if (example && example.yaml !== yamlText) setActiveExampleId('custom');
+  }, [yamlText, activeExampleId]);
+
   // Debounced live analysis while typing
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -301,74 +350,49 @@ export function App() {
         setParseErrors(result.errors);
       }
     }, 180);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
+    return () => window.clearTimeout(timer);
   }, [yamlText, disabledRuleIds]);
 
   const findings: Finding[] = analysis?.findings ?? EMPTY_FINDINGS;
   const diagnostics = analysis?.diagnostics ?? EMPTY_DIAGNOSTICS;
-  const problemCount =
-    parseErrors.length + diagnostics.filter((d) => d.severity !== 'info').length;
+  const errorCount = parseErrors.length + diagnostics.filter((d) => d.severity === 'error').length;
+  const problemCount = parseErrors.length + diagnostics.filter((d) => d.severity !== 'info').length;
+  const isEmpty = yamlText.trim().length === 0;
 
   const graph = useMemo(() => {
-    if (!analysis) return { nodes: [], edges: [] };
+    if (!analysis || isEmpty) return { nodes: [], edges: [] };
     return buildComposeGraph(analysis.model, analysis.findings);
-  }, [analysis]);
+  }, [analysis, isEmpty]);
 
   const selectedNodeData: DiagramNodeData | null = useMemo(() => {
     if (!selectedNodeId) return null;
-    const found = graph.nodes.find((n) => n.id === selectedNodeId);
-    return found ? found.data : null;
+    return graph.nodes.find((n) => n.id === selectedNodeId)?.data ?? null;
   }, [graph, selectedNodeId]);
 
-  const layoutTrigger = useMemo(
-    () => (leftCollapsed ? 1 : 0) + (rightCollapsed ? 2 : 0),
-    [leftCollapsed, rightCollapsed],
-  );
+  const layoutTrigger = (leftCollapsed ? 1 : 0) + (rightCollapsed ? 2 : 0);
 
   const handleJumpToLine = (line: number) => {
-    if (window.innerWidth < 1024) {
-      setMobileTab('editor');
-    } else if (leftCollapsed) {
-      setLeftCollapsed(false);
-    }
-    window.requestAnimationFrame(() => {
-      editorRef.current?.jumpToLine(line);
-    });
+    if (window.innerWidth < 1024) setMobileTab('editor');
+    else if (leftCollapsed) setLeftCollapsed(false);
+    window.requestAnimationFrame(() => editorRef.current?.jumpToLine(line));
   };
 
-  const handleSelectDiagramNode = (
-    nodeId: string | null,
-    _data: DiagramNodeData | null,
-  ) => {
+  const handleSelectDiagramNode = (nodeId: string | null) => {
     setSelectedNodeId(nodeId);
     if (nodeId) {
-      setRightTab('details');
+      setRightTab('overview');
       if (rightCollapsed) setRightCollapsed(false);
-      if (window.innerWidth < 1024) {
-        setMobileTab('findings');
-      }
-    } else {
-      setRightTab('findings');
+      if (window.innerWidth < 1024) setMobileTab('findings');
     }
   };
 
   const handleToggleRule = (ruleId: string) => {
     setDisabledRuleIds((prev) => {
       const next = new Set(prev);
-      if (next.has(ruleId)) {
-        next.delete(ruleId);
-      } else {
-        next.add(ruleId);
-      }
+      if (next.has(ruleId)) next.delete(ruleId);
+      else next.add(ruleId);
       return next;
     });
-  };
-
-  const handleEnableAllRules = () => {
-    setDisabledRuleIds(new Set());
   };
 
   const handleSelectFinding = (finding: Finding) => {
@@ -379,7 +403,7 @@ export function App() {
   const handleRequestFix = (finding: Finding) => {
     const after = applyFindingFix(yamlText, finding);
     if (after === null) {
-      showToast('This fix cannot be applied automatically here (for example because the value comes from a YAML anchor). Use the YAML example instead.');
+      showToast('This one cannot be fixed automatically here (the value comes from a YAML anchor). Use the example instead.');
       return;
     }
     if (after === yamlText) {
@@ -391,7 +415,6 @@ export function App() {
 
   const handleConfirmFix = () => {
     if (!fixPreview) return;
-    // Only apply if the editor content did not change underneath the preview
     if (yamlText === fixPreview.before) {
       setYamlText(fixPreview.after);
     } else {
@@ -402,14 +425,13 @@ export function App() {
   };
 
   const handleSuppressFinding = (finding: Finding) => {
-    const reason = 'accepted risk';
-    const updated = addSuppressionComment(yamlText, finding.line, finding.ruleId, reason);
+    const updated = addSuppressionComment(yamlText, finding.line, finding.ruleId, 'accepted risk');
     if (updated === yamlText) {
-      showToast(`${finding.ruleId} is already ignored on this line.`);
+      showToast(`${finding.ruleId} is already accepted on this line.`);
       return;
     }
     setYamlText(updated);
-    showToast(`Added "# composure-ignore ${finding.ruleId}" above line ${finding.line}. Edit the reason after "--".`);
+    showToast(`Added "# composure-ignore ${finding.ruleId}" above line ${finding.line}. Write your reason after "--".`);
   };
 
   const handleSelectExample = (exampleId: string) => {
@@ -420,44 +442,25 @@ export function App() {
     setYamlText(ex.yaml);
     setSelectedNodeId(null);
     setRightTab('findings');
-    if (window.location.hash) {
-      window.history.replaceState(null, '', window.location.pathname);
+    if (window.location.hash) window.history.replaceState(null, '', window.location.pathname);
+  };
+
+  const handleFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > MAX_FILE_BYTES) {
+      showToast('That file is larger than 2 MB, which is unusual for a Compose file. Pick another file.');
+      return;
     }
-  };
-
-  const handleFileContent = (name: string, content: string) => {
-    setFileName(name);
-    setActiveExampleId('custom');
-    setYamlText(content);
-    setSelectedNodeId(null);
-    setRightTab('findings');
-  };
-
-  const handleFileUploadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        handleFileContent(file.name, reader.result);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDraggingFile(false);
-    const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        handleFileContent(file.name, reader.result);
-      }
-    };
-    reader.readAsText(file);
+    try {
+      const content = await readFile(file);
+      setFileName(file.name);
+      setActiveExampleId('custom');
+      setYamlText(content);
+      setSelectedNodeId(null);
+      setRightTab('findings');
+    } catch {
+      showToast(`Could not read ${file.name}.`);
+    }
   };
 
   const handleShareUrl = async () => {
@@ -467,16 +470,21 @@ export function App() {
       sharedTextRef.current = yamlText;
       window.history.replaceState(null, '', newHash);
       const fullUrl = `${window.location.origin}${window.location.pathname}${newHash}`;
-      if (fullUrl.length > 32000) {
-        showToast('Link created, but it is very long; some chat apps may cut it off.');
-      }
       await navigator.clipboard.writeText(fullUrl);
       setShareCopied(true);
       window.setTimeout(() => setShareCopied(false), 2000);
+      if (fullUrl.length > 32000) showToast('Link copied. It is very long, so some chat apps may cut it off.');
     } catch {
       showToast('Could not copy to the clipboard. The link is in the address bar.');
     }
   };
+
+  const runExport = (action: () => void) => {
+    setShowExportMenu(false);
+    action();
+  };
+
+  const downloadName = /\.ya?ml$/i.test(fileName) ? fileName : 'docker-compose.yml';
 
   const handleExportMarkdown = () => {
     if (!analysis) return;
@@ -486,8 +494,43 @@ export function App() {
       score: analysis.score,
       fileName,
     });
-    downloadTextFile(md, 'composure-security-report.md');
+    downloadTextFile(md, 'composure-report.md');
   };
+
+  const handleCopyYaml = async () => {
+    try {
+      await navigator.clipboard.writeText(yamlText);
+      showToast('YAML copied to the clipboard.');
+    } catch {
+      showToast('Could not copy to the clipboard.');
+    }
+  };
+
+  const emptyState = (
+    <div className="max-w-sm text-center space-y-4">
+      <div className="space-y-1.5">
+        <h2 className="text-[15px] font-semibold text-[var(--text-primary)]">Check a Compose file</h2>
+        <p className="text-[13px] text-[var(--text-secondary)] leading-relaxed">
+          Paste YAML into the editor, drop a file anywhere, or start from an example. Nothing leaves your browser.
+        </p>
+      </div>
+      <div className="flex items-center justify-center gap-2">
+        <Button variant="primary" size="md" onClick={() => fileInputRef.current?.click()}>
+          Open file
+        </Button>
+        <Button size="md" onClick={() => handleSelectExample('production-stack')}>
+          Load an example
+        </Button>
+      </div>
+    </div>
+  );
+
+  const fileStatus =
+    errorCount > 0 ? (
+      <span className="text-xs text-[var(--sev-critical-fg)] tabular shrink-0">
+        {errorCount} error{errorCount > 1 ? 's' : ''}
+      </span>
+    ) : null;
 
   return (
     <div
@@ -499,266 +542,176 @@ export function App() {
         if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
         setIsDraggingFile(false);
       }}
-      onDrop={handleDrop}
-      className="h-screen w-screen overflow-hidden flex flex-col bg-[var(--bg-app)] text-[var(--text-primary)] select-none"
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDraggingFile(false);
+        void handleFile(e.dataTransfer.files?.[0]);
+      }}
+      className="h-screen w-screen overflow-hidden flex flex-col bg-[var(--bg-app)] text-[var(--text-primary)]"
     >
-      {/* Drag and Drop Overlay */}
       {isDraggingFile && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-8 pointer-events-none">
-          <div className="max-w-md w-full rounded-md border border-dashed border-[var(--border-strong)] bg-[var(--bg-panel)] p-8 text-center space-y-2 shadow-xl">
-            <div className="text-sm font-semibold text-[var(--text-primary)]">
-              Drop your docker-compose.yml to inspect
-            </div>
-            <p className="text-xs text-[var(--text-secondary)]">
-              100% client-side. Your compose file never leaves the browser.
-            </p>
+        <div className="fixed inset-0 z-50 bg-[var(--overlay)] flex items-center justify-center p-8 pointer-events-none">
+          <div className="max-w-sm w-full rounded-lg border-2 border-dashed border-[var(--border-hover)] bg-[var(--bg-panel)] px-8 py-10 text-center space-y-1">
+            <div className="text-[15px] font-semibold text-[var(--text-primary)]">Drop to check this file</div>
+            <p className="text-xs text-[var(--text-secondary)]">It is read locally and never uploaded.</p>
           </div>
         </div>
       )}
 
-      {/* Header: Wordmark, Preset Switcher, Open, Share, Export Dropdown, GitHub, Settings, Theme */}
-      <header className="h-11 border-b border-[var(--border-subtle)] px-4 flex items-center justify-between gap-3 shrink-0 bg-[var(--bg-panel)]">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 rounded-md bg-[var(--bg-elevated)] border border-[var(--border-strong)] flex items-center justify-center text-[var(--accent)] shadow-xs">
-              <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-                <rect x="2" y="2" width="5" height="5" rx="1.2" />
-                <rect x="9" y="2" width="5" height="5" rx="1.2" fillOpacity="0.75" />
-                <rect x="2" y="9" width="5" height="5" rx="1.2" fillOpacity="0.75" />
-                <rect x="9" y="9" width="5" height="5" rx="1.2" fillOpacity="0.4" />
-              </svg>
-            </div>
-            <span className="hidden sm:inline text-sm font-semibold tracking-tight text-[var(--text-primary)]">
-              Composure
-            </span>
-          </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".yml,.yaml,text/yaml,application/x-yaml"
+        onChange={(e) => {
+          void handleFile(e.target.files?.[0]);
+          e.target.value = '';
+        }}
+        className="hidden"
+      />
 
-          {/* Direct Preset Stack Switcher */}
-          <div className="hidden sm:flex items-center">
+      {/* Header */}
+      <header className="h-12 border-b border-[var(--border-subtle)] px-3 sm:px-4 flex items-center justify-between gap-3 shrink-0 bg-[var(--bg-panel)] select-none">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2 text-[var(--text-primary)]">
+            <LogoMark className="w-5 h-5" />
+            <span className="hidden sm:inline text-[15px] font-semibold tracking-tight">Composure</span>
+          </div>
+          <span className="hidden sm:block w-px h-5 bg-[var(--border-subtle)]" />
+          <div className="relative hidden sm:block">
             <select
               aria-label="Preset Compose Stack"
               value={activeExampleId}
               onChange={(e) => handleSelectExample(e.target.value)}
-              className="h-7 px-2 text-xs rounded bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)] hover:border-[var(--border-strong)] focus:outline-none focus:border-[var(--accent)] font-medium cursor-pointer transition-colors"
+              className="appearance-none h-7 pl-2.5 pr-7 text-[13px] rounded-md bg-transparent text-[var(--text-primary)] border border-transparent hover:bg-[var(--bg-elevated)] hover:border-[var(--border-subtle)] cursor-pointer transition-colors max-w-[220px] truncate"
             >
               {COMPOSE_EXAMPLES.map((ex) => (
                 <option key={ex.id} value={ex.id}>
                   {ex.label}
                 </option>
               ))}
-              {activeExampleId === 'custom' && (
-                <option value="custom">Custom ({fileName})</option>
-              )}
+              {activeExampleId === 'custom' && <option value="custom">{fileName}</option>}
             </select>
+            <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-muted)]" />
           </div>
         </div>
 
-        {/* Right Controls: Open, Share, Export dropdown, Settings gear, Theme toggle */}
         <div className="flex items-center gap-1.5">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".yml,.yaml,text/yaml,application/x-yaml"
-            onChange={handleFileUploadChange}
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            title="Open docker-compose.yml file"
-            className="h-7 inline-flex items-center px-2.5 rounded text-xs font-medium bg-[var(--bg-elevated)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors"
-          >
+          <Button onClick={() => fileInputRef.current?.click()} title="Open a Compose file (Ctrl/Cmd+O)">
             Open
-          </button>
-
-          <button
-            type="button"
-            onClick={handleShareUrl}
-            title="Copy shareable link with compressed YAML in URL hash"
-            className="h-7 inline-flex items-center px-2.5 rounded text-xs font-medium bg-[var(--bg-elevated)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors"
-          >
-            {shareCopied ? 'Copied' : 'Share'}
-          </button>
-
-          {/* Export Dropdown (Neutral Secondary Button) */}
+          </Button>
+          <Button onClick={handleShareUrl} title="Copy a link that contains the compressed file">
+            {shareCopied ? 'Link copied' : 'Share'}
+          </Button>
           <div ref={exportMenuRef} className="relative">
-            <button
-              type="button"
+            <Button
               onClick={() => setShowExportMenu((v) => !v)}
-              className="h-7 inline-flex items-center gap-1.5 px-2.5 rounded text-xs font-medium bg-[var(--bg-elevated)] hover:bg-[var(--bg-subtle)] text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors"
+              aria-haspopup="menu"
+              aria-expanded={showExportMenu}
+              title="Export (Ctrl/Cmd+S)"
             >
-              <span>Export</span>
-              <ChevronDownIcon className="w-3 h-3" />
-            </button>
-
+              Export
+              <ChevronDownIcon className="w-3 h-3 -mr-0.5" />
+            </Button>
             {showExportMenu && (
-              <div className="absolute right-0 mt-1 w-44 rounded bg-[var(--bg-panel)] border border-[var(--border-strong)] shadow-lg py-1 z-30 text-xs">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowExportMenu(false);
-                    exportDiagramAsSvg(graph, theme);
-                  }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--bg-elevated)] text-[var(--text-primary)]"
-                >
-                  Diagram as SVG
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowExportMenu(false);
-                    exportDiagramAsPng(graph, theme);
-                  }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--bg-elevated)] text-[var(--text-primary)]"
-                >
-                  Diagram as PNG
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowExportMenu(false);
-                    handleExportMarkdown();
-                  }}
-                  className="w-full px-3 py-1.5 text-left hover:bg-[var(--bg-elevated)] text-[var(--text-primary)]"
-                >
-                  Markdown report (.md)
-                </button>
+              <div
+                role="menu"
+                className="absolute right-0 mt-1.5 w-56 rounded-lg bg-[var(--bg-panel)] border border-[var(--border-strong)] shadow-[0_8px_24px_rgb(0_0_0/0.18)] py-1 z-30"
+              >
+                <MenuItem onClick={() => runExport(() => downloadTextFile(yamlText, downloadName, 'application/x-yaml;charset=utf-8'))} hint=".yml">
+                  Download YAML
+                </MenuItem>
+                <MenuItem onClick={() => runExport(() => void handleCopyYaml())}>Copy YAML</MenuItem>
+                <div className="my-1 h-px bg-[var(--border-subtle)]" />
+                <MenuItem onClick={() => runExport(handleExportMarkdown)} hint=".md">
+                  Report
+                </MenuItem>
+                <MenuItem onClick={() => runExport(() => void exportDiagramAsSvg(graph, theme))} hint=".svg">
+                  Diagram
+                </MenuItem>
+                <MenuItem onClick={() => runExport(() => void exportDiagramAsPng(graph, theme))} hint=".png">
+                  Diagram image
+                </MenuItem>
               </div>
             )}
           </div>
-
-          {/* GitHub Repository Link */}
+          <span className="hidden sm:block w-px h-5 mx-1 bg-[var(--border-subtle)]" />
+          <IconButton label="Settings" onClick={() => setShowSettings(true)}>
+            <SettingsGearIcon className="w-4 h-4" />
+          </IconButton>
+          <IconButton
+            label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          >
+            {theme === 'dark' ? <SunIcon className="w-4 h-4" /> : <MoonIcon className="w-4 h-4" />}
+          </IconButton>
           <a
             href="https://github.com/VR0EM/composure"
             target="_blank"
             rel="noreferrer"
-            title="View Composure on GitHub"
-            aria-label="GitHub Repository"
-            className="h-7 w-7 inline-flex items-center justify-center rounded bg-[var(--bg-elevated)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors"
+            aria-label="Composure on GitHub"
+            title="Composure on GitHub"
+            className="hidden sm:inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
           >
-            <GitHubIcon className="w-3.5 h-3.5" />
+            <GitHubIcon className="w-4 h-4" />
           </a>
-
-          {/* Settings Gear Button (Presets, Policy & About) */}
-          <button
-            type="button"
-            onClick={() => setShowSettingsDialog(true)}
-            title="Settings and About"
-            aria-label="Settings"
-            className="h-7 w-7 inline-flex items-center justify-center rounded bg-[var(--bg-elevated)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors"
-          >
-            <SettingsGearIcon className="w-3.5 h-3.5" />
-          </button>
-
-          {/* Theme Toggle */}
-          <button
-            type="button"
-            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-            aria-label="Toggle theme"
-            className="h-7 w-7 inline-flex items-center justify-center rounded bg-[var(--bg-elevated)] hover:bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] transition-colors"
-          >
-            {theme === 'dark' ? (
-              <SunIcon className="w-3.5 h-3.5" />
-            ) : (
-              <MoonIcon className="w-3.5 h-3.5" />
-            )}
-          </button>
         </div>
       </header>
 
-      {/* Mobile/Tablet (< 1024px) Tab Switcher: its own row so header buttons stay visible */}
-      <nav className="lg:hidden h-9 px-3 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] flex items-center shrink-0">
-        <div className="flex w-full items-center bg-[var(--bg-elevated)] p-0.5 rounded border border-[var(--border-subtle)] text-xs">
-          <button
-            type="button"
-            onClick={() => setMobileTab('editor')}
-            className={`flex-1 px-2.5 py-1 rounded transition-colors ${
-              mobileTab === 'editor'
-                ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
-                : 'text-[var(--text-secondary)]'
-            }`}
-          >
-            Editor
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobileTab('diagram')}
-            className={`flex-1 px-2.5 py-1 rounded transition-colors ${
-              mobileTab === 'diagram'
-                ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
-                : 'text-[var(--text-secondary)]'
-            }`}
-          >
-            Diagram
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobileTab('findings')}
-            className={`flex-1 px-2.5 py-1 rounded transition-colors ${
-              mobileTab === 'findings'
-                ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
-                : 'text-[var(--text-secondary)]'
-            }`}
-          >
-            Findings
-          </button>
+      {/* Mobile tab switcher */}
+      <nav className="lg:hidden h-10 px-3 border-b border-[var(--border-subtle)] bg-[var(--bg-panel)] flex items-center shrink-0">
+        <div className="flex w-full items-center rounded-md bg-[var(--bg-subtle)] p-0.5 text-xs" role="tablist">
+          {(
+            [
+              ['editor', 'Editor'],
+              ['diagram', 'Diagram'],
+              ['findings', 'Findings'],
+            ] as const
+          ).map(([tab, label]) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={mobileTab === tab}
+              onClick={() => setMobileTab(tab)}
+              className={`flex-1 h-7 rounded-[5px] transition-colors ${
+                mobileTab === tab
+                  ? 'bg-[var(--bg-panel)] text-[var(--text-primary)] font-medium shadow-[0_1px_2px_rgb(0_0_0/0.12)]'
+                  : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </nav>
 
-      {/* Main Three-Area Workspace */}
-      <main className="flex-1 flex min-h-0 overflow-hidden select-text">
-        {/* 1. Left Area: Editor (Collapsible to a thin rail on desktop) */}
+      <main className="flex-1 flex min-h-0 overflow-hidden">
+        {/* Editor */}
         {leftCollapsed ? (
-          <aside
+          <button
+            type="button"
             onClick={() => setLeftCollapsed(false)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                setLeftCollapsed(false);
-              }
-            }}
-            title="Click anywhere to expand YAML editor (Cmd+B)"
-            aria-label="Expand YAML editor"
-            className="hidden lg:flex w-9 border-r border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-elevated)] cursor-pointer flex-col items-center py-2.5 gap-3 shrink-0 select-none transition-colors group"
+            title="Show editor (Ctrl/Cmd+B)"
+            aria-label="Show editor"
+            className="hidden lg:flex w-10 border-r border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-elevated)] flex-col items-center py-3 gap-3 shrink-0 transition-colors"
           >
-            <div className="p-1 rounded text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
-              <ChevronRightIcon className="w-4 h-4" />
-            </div>
-            <span className="text-xs font-mono text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] [writing-mode:vertical-rl] rotate-180 transition-colors">
+            <ChevronRightIcon className="w-4 h-4 text-[var(--text-secondary)]" />
+            <span className="text-xs font-mono text-[var(--text-secondary)] [writing-mode:vertical-rl] rotate-180">
               {fileName}
             </span>
-          </aside>
+          </button>
         ) : (
           <section
-            className={`${
-              mobileTab === 'editor' ? 'flex w-full' : 'hidden'
-            } lg:flex lg:w-[340px] xl:w-[380px] border-r border-[var(--border-subtle)] flex-col h-full bg-[var(--bg-panel)] shrink-0`}
+            className={`${mobileTab === 'editor' ? 'flex w-full' : 'hidden'} lg:flex lg:w-[360px] xl:w-[400px] border-r border-[var(--border-subtle)] flex-col h-full bg-[var(--bg-panel)] shrink-0`}
           >
-            <div className="h-9 px-3 border-b border-[var(--border-subtle)] flex items-center justify-between text-xs shrink-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="font-mono text-xs text-[var(--text-primary)] font-medium truncate">
-                  {fileName}
-                </span>
-                {parseErrors.length > 0 && (
-                  <span className="text-xs text-[var(--sev-critical-fg)] shrink-0">
-                    {parseErrors.length} error{parseErrors.length > 1 ? 's' : ''}
-                  </span>
-                )}
+            <div className="h-10 pl-4 pr-2 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="font-mono text-xs text-[var(--text-primary)] truncate">{fileName}</span>
+                {fileStatus}
               </div>
-
-              <button
-                type="button"
-                onClick={() => setLeftCollapsed(true)}
-                title="Collapse editor (Cmd+B)"
-                aria-label="Collapse editor"
-                className="hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] border border-transparent hover:border-[var(--border-subtle)] transition-colors cursor-pointer"
-              >
-                <ChevronLeftIcon className="w-3.5 h-3.5" />
-                <span>Collapse</span>
-              </button>
+              <IconButton label="Hide editor (Ctrl/Cmd+B)" onClick={() => setLeftCollapsed(true)} className="hidden lg:inline-flex">
+                <ChevronLeftIcon className="w-4 h-4" />
+              </IconButton>
             </div>
 
             <div className="flex-1 min-h-0">
@@ -774,23 +727,16 @@ export function App() {
             </div>
 
             {parseErrors.length > 0 && (
-              <div
-                role="alert"
-                className="border-t border-[var(--sev-critical-border)] bg-[var(--sev-critical-group-bg)] px-3 py-2 max-h-32 overflow-y-auto space-y-1 shrink-0"
-              >
+              <div role="alert" className="border-t border-[var(--border-subtle)] bg-[var(--sev-critical-group-bg)] max-h-32 overflow-y-auto shrink-0">
                 {parseErrors.map((err, idx) => (
                   <button
                     key={idx}
                     type="button"
                     onClick={() => handleJumpToLine(err.line)}
-                    className="w-full text-left flex items-start justify-between gap-2 text-xs text-[var(--text-primary)] hover:underline"
+                    className="w-full px-4 py-2 text-left flex items-start justify-between gap-3 text-xs hover:bg-[var(--sev-critical-chip-bg)]"
                   >
-                    <span className="font-mono text-xs break-all">
-                      {err.message}
-                    </span>
-                    <span className="shrink-0 font-mono text-xs text-[var(--sev-critical-fg)]">
-                      L{err.line}
-                    </span>
+                    <span className="text-[var(--text-primary)]">{err.message}</span>
+                    <span className="shrink-0 tabular text-[var(--sev-critical-fg)]">L{err.line}</span>
                   </button>
                 ))}
               </div>
@@ -798,11 +744,9 @@ export function App() {
           </section>
         )}
 
-        {/* 2. Center Area: Diagram taking all remaining space */}
+        {/* Diagram */}
         <section
-          className={`${
-            mobileTab === 'diagram' ? 'flex w-full' : 'hidden'
-          } lg:flex flex-1 min-w-0 h-full relative`}
+          className={`${mobileTab === 'diagram' ? 'flex w-full' : 'hidden'} lg:flex flex-1 min-w-0 h-full relative`}
         >
           <ComposeDiagram
             graph={graph}
@@ -811,135 +755,85 @@ export function App() {
             isStale={parseErrors.length > 0}
             theme={theme}
             layoutTrigger={layoutTrigger}
+            emptyContent={emptyState}
           />
         </section>
 
-        {/* 3. Right Area: Single Panel (~380px wide, collapsible) with "Findings" and "Details" tabs */}
+        {/* Side panel */}
         {rightCollapsed ? (
-          <aside
+          <button
+            type="button"
             onClick={() => setRightCollapsed(false)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                setRightCollapsed(false);
-              }
-            }}
-            title="Click anywhere to expand findings & details panel (Cmd+\)"
-            aria-label="Expand findings and details panel"
-            className="hidden lg:flex w-9 border-l border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-elevated)] cursor-pointer flex-col items-center py-2.5 gap-3 shrink-0 select-none transition-colors group"
+            title="Show side panel (Ctrl/Cmd+\)"
+            aria-label="Show side panel"
+            className="hidden lg:flex w-10 border-l border-[var(--border-subtle)] bg-[var(--bg-panel)] hover:bg-[var(--bg-elevated)] flex-col items-center py-3 gap-3 shrink-0 transition-colors"
           >
-            <div className="p-1 rounded text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
-              <ChevronLeftIcon className="w-4 h-4" />
-            </div>
-            <span className="text-xs text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] [writing-mode:vertical-rl] transition-colors">
-              Findings ({findings.length})
+            <ChevronLeftIcon className="w-4 h-4 text-[var(--text-secondary)]" />
+            <span className="text-xs text-[var(--text-secondary)] [writing-mode:vertical-rl] tabular">
+              {findings.length} findings
             </span>
-          </aside>
+          </button>
         ) : (
           <section
-            className={`${
-              mobileTab === 'findings' ? 'flex w-full' : 'hidden'
-            } lg:flex lg:w-[380px] border-l border-[var(--border-subtle)] flex-col h-full bg-[var(--bg-panel)] shrink-0`}
+            className={`${mobileTab === 'findings' ? 'flex w-full' : 'hidden'} lg:flex lg:w-[400px] border-l border-[var(--border-subtle)] flex-col h-full bg-[var(--bg-panel)] shrink-0`}
           >
-            {/* Right Panel Tab Header: Findings | Details */}
-            <div className="h-9 px-3 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-4 h-full text-xs min-w-0">
-                <button
-                  type="button"
-                  onClick={() => setRightTab('findings')}
-                  className={`h-full inline-flex items-center gap-1.5 border-b-2 font-medium transition-colors ${
-                    rightTab === 'findings'
-                      ? 'border-[var(--accent)] text-[var(--text-primary)]'
-                      : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  <span>Findings</span>
-                  <span className="text-xs text-[var(--text-muted)]">
-                    {findings.length}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
+            <div className="h-10 pl-4 pr-2 border-b border-[var(--border-subtle)] flex items-center justify-between gap-2 shrink-0" role="tablist">
+              <div className="flex items-center gap-5 h-full min-w-0">
+                <PanelTab active={rightTab === 'findings'} onClick={() => setRightTab('findings')} count={findings.length}>
+                  Findings
+                </PanelTab>
+                <PanelTab
+                  active={rightTab === 'problems'}
                   onClick={() => setRightTab('problems')}
-                  className={`h-full inline-flex items-center gap-1.5 border-b-2 font-medium transition-colors ${
-                    rightTab === 'problems'
-                      ? 'border-[var(--accent)] text-[var(--text-primary)]'
-                      : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }`}
+                  count={problemCount}
+                  countTone={errorCount > 0 ? 'error' : 'muted'}
                 >
-                  <span>Problems</span>
-                  <span
-                    className={`text-xs ${
-                      parseErrors.length > 0 || diagnostics.some((d) => d.severity === 'error')
-                        ? 'text-[var(--sev-critical-fg)]'
-                        : 'text-[var(--text-muted)]'
-                    }`}
-                  >
-                    {problemCount}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setRightTab('details')}
-                  className={`h-full inline-flex items-center gap-1.5 border-b-2 font-medium transition-colors ${
-                    rightTab === 'details'
-                      ? 'border-[var(--accent)] text-[var(--text-primary)]'
-                      : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                  }`}
-                >
-                  <span>Details</span>
-                  {selectedNodeData?.kind === 'service' && (
-                    <span className="text-xs text-[var(--text-muted)] truncate max-w-[84px]">
-                      {selectedNodeData.service.name}
-                    </span>
-                  )}
-                </button>
+                  Problems
+                </PanelTab>
+                <PanelTab active={rightTab === 'overview'} onClick={() => setRightTab('overview')}>
+                  {selectedNodeData ? 'Details' : 'Overview'}
+                </PanelTab>
               </div>
-
-              <button
-                type="button"
-                onClick={() => setRightCollapsed(true)}
-                title="Collapse panel (Cmd+\)"
-                aria-label="Collapse panel"
-                className="hidden lg:inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] border border-transparent hover:border-[var(--border-subtle)] transition-colors cursor-pointer shrink-0"
-              >
-                <ChevronRightIcon className="w-3.5 h-3.5" />
-              </button>
+              <IconButton label="Hide side panel (Ctrl/Cmd+\)" onClick={() => setRightCollapsed(true)} className="hidden lg:inline-flex">
+                <ChevronRightIcon className="w-4 h-4" />
+              </IconButton>
             </div>
 
-            {/* Tab Content */}
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-              {rightTab === 'findings' ? (
-                analysis ? (
-                  <FindingsPanel
-                    findings={findings}
-                    suppressed={analysis.suppressed}
-                    score={analysis.score}
-                    onToggleRule={handleToggleRule}
-                    onSelectFinding={handleSelectFinding}
-                    onJumpToLine={handleJumpToLine}
-                    onApplyFix={handleRequestFix}
-                    onSuppress={handleSuppressFinding}
-                  />
+              {!analysis || isEmpty ? (
+                rightTab === 'problems' && parseErrors.length > 0 ? (
+                  <ProblemsPanel parseErrors={parseErrors} diagnostics={[]} onJumpToLine={handleJumpToLine} />
                 ) : (
-                  <div className="p-6 text-center text-xs text-[var(--text-secondary)]">
-                    Paste a docker-compose.yml to see findings.
+                  <div className="p-6 text-center text-[13px] text-[var(--text-secondary)]">
+                    {parseErrors.length > 0 ? 'Fix the YAML errors to see results.' : 'Results appear here once there is a Compose file.'}
                   </div>
                 )
-              ) : rightTab === 'problems' ? (
-                <ProblemsPanel
-                  parseErrors={parseErrors}
-                  diagnostics={diagnostics}
+              ) : rightTab === 'findings' ? (
+                <FindingsPanel
+                  findings={findings}
+                  suppressed={analysis.suppressed}
+                  score={analysis.score}
+                  onToggleRule={handleToggleRule}
+                  onSelectFinding={handleSelectFinding}
                   onJumpToLine={handleJumpToLine}
+                  onApplyFix={handleRequestFix}
+                  onSuppress={handleSuppressFinding}
+                  onFixAll={() => setShowFixAll(true)}
                 />
-              ) : (
+              ) : rightTab === 'problems' ? (
+                <ProblemsPanel parseErrors={parseErrors} diagnostics={diagnostics} onJumpToLine={handleJumpToLine} />
+              ) : selectedNodeData ? (
                 <NodeDetailsPanel
                   nodeData={selectedNodeData}
                   onJumpToLine={handleJumpToLine}
+                  onBack={() => setSelectedNodeId(null)}
+                />
+              ) : (
+                <ProjectOverview
+                  model={analysis.model}
+                  findings={findings}
+                  score={analysis.score}
+                  onSelectService={(name) => setSelectedNodeId(`service:${name}`)}
                 />
               )}
             </div>
@@ -947,164 +841,20 @@ export function App() {
         )}
       </main>
 
-      {/* Settings Dialog (Preset, Policy & About) */}
-      {showSettingsDialog && (
-        <div
-          onClick={() => setShowSettingsDialog(false)}
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-md bg-[var(--bg-panel)] border border-[var(--border-strong)] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
-          >
-            <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-[var(--text-primary)]">
-                Settings
-              </h2>
-              <button
-                type="button"
-                onClick={() => setShowSettingsDialog(false)}
-                className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-              >
-                <CloseIcon className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-4 overflow-y-auto space-y-5 text-xs">
-              {/* Example Presets */}
-              <div className="space-y-2">
-                <label
-                  htmlFor="settings-preset-select"
-                  className="block font-medium text-[var(--text-primary)]"
-                >
-                  Example Compose File
-                </label>
-                <select
-                  id="settings-preset-select"
-                  value={activeExampleId}
-                  onChange={(e) => {
-                    handleSelectExample(e.target.value);
-                  }}
-                  className="w-full h-8 px-2.5 rounded bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-strong)] focus:outline-none focus:border-[var(--accent)]"
-                >
-                  {COMPOSE_EXAMPLES.map((ex) => (
-                    <option key={ex.id} value={ex.id}>
-                      {ex.label}: {ex.description}
-                    </option>
-                  ))}
-                  {activeExampleId === 'custom' && (
-                    <option value="custom">Custom ({fileName})</option>
-                  )}
-                </select>
-              </div>
-
-              {/* Policy Rules */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-[var(--text-primary)]">
-                    Hardening Policy Rules (
-                    {ALL_RULES.length - disabledRuleIds.size}/{ALL_RULES.length}{' '}
-                    enabled)
-                  </span>
-                  {disabledRuleIds.size > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleEnableAllRules}
-                      className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline"
-                    >
-                      Enable all
-                    </button>
-                  )}
-                </div>
-
-                <div className="divide-y divide-[var(--border-subtle)] border border-[var(--border-subtle)] rounded max-h-60 overflow-y-auto">
-                  {ALL_RULES.map((rule) => {
-                    const enabled = !disabledRuleIds.has(rule.id);
-                    return (
-                      <label
-                        key={rule.id}
-                        className="flex items-center justify-between gap-2 px-3 py-2 hover:bg-[var(--bg-elevated)] cursor-pointer"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <input
-                            type="checkbox"
-                            checked={enabled}
-                            onChange={() => handleToggleRule(rule.id)}
-                            className="accent-[var(--accent)] rounded cursor-pointer"
-                          />
-                          <span className="text-xs text-[var(--text-secondary)] shrink-0">
-                            {rule.id}
-                          </span>
-                          <span
-                            className={`truncate ${
-                              enabled
-                                ? 'text-[var(--text-primary)]'
-                                : 'text-[var(--text-muted)] line-through'
-                            }`}
-                          >
-                            {rule.title}
-                          </span>
-                        </div>
-                        <span className="text-xs text-[var(--text-secondary)] shrink-0 capitalize">
-                          {rule.severity}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Accepting risks inline */}
-              <div className="space-y-1.5 text-[var(--text-secondary)] leading-relaxed">
-                <div className="font-medium text-[var(--text-primary)]">
-                  Accepting a risk for one line or service
-                </div>
-                <p>
-                  Muting a rule here turns it off everywhere. To accept a single
-                  finding instead, put a comment above (or at the end of) the line:
-                </p>
-                <pre className="p-2 rounded bg-[var(--bg-app)] border border-[var(--border-subtle)] font-mono text-xs text-[var(--text-primary)] overflow-x-auto">
-{`# composure-ignore CMP002 -- Traefik needs the socket
-- /var/run/docker.sock:/var/run/docker.sock:ro`}
-                </pre>
-                <p>
-                  Above a service name it applies to the whole service;{' '}
-                  <code className="font-mono">composure-ignore-file</code> applies
-                  to the whole file. Accepted findings no longer count toward the
-                  score, and the same comments work in the CLI.
-                </p>
-              </div>
-
-              {/* About & Privacy */}
-              <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2 text-[var(--text-secondary)] leading-relaxed">
-                <div className="font-medium text-[var(--text-primary)]">
-                  About Composure &amp; Privacy
-                </div>
-                <p>
-                  Composure runs 100% client-side in your browser. There is no
-                  backend, no external API calls, no analytics, and no
-                  telemetry. Your{' '}
-                  <code className="font-mono text-[var(--text-primary)]">
-                    docker-compose.yml
-                  </code>{' '}
-                  file never leaves your browser.
-                </p>
-                <p>
-                  When you use the Share action, your YAML is compressed locally
-                  into the URL fragment (
-                  <code className="font-mono">#compose=...</code>), which
-                  browsers never transmit to web servers.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+      {showSettings && (
+        <SettingsDialog
+          disabledRuleIds={disabledRuleIds}
+          onToggleRule={handleToggleRule}
+          onEnableAll={() => setDisabledRuleIds(new Set())}
+          onClose={() => setShowSettings(false)}
+        />
       )}
 
       {fixPreview && fixPreview.finding.autofix && (
         <FixPreviewDialog
-          title={`Fix ${fixPreview.finding.ruleId}: ${fixPreview.finding.autofix.label}`}
-          subtitle={`Service "${fixPreview.finding.service}" · ${fixPreview.finding.title}`}
+          title={fixPreview.finding.autofix.label}
+          subtitle={`${fixPreview.finding.ruleId} · ${fixPreview.finding.title} · ${fixPreview.finding.service}`}
+          {...(fixPreview.finding.autofix.caution ? { caution: fixPreview.finding.autofix.caution } : {})}
           before={fixPreview.before}
           after={fixPreview.after}
           onApply={handleConfirmFix}
@@ -1112,10 +862,24 @@ export function App() {
         />
       )}
 
+      {showFixAll && (
+        <FixAllDialog
+          yamlText={yamlText}
+          findings={findings}
+          disabledRuleIds={disabledRuleIds}
+          onApply={(next, count) => {
+            setYamlText(next);
+            setShowFixAll(false);
+            showToast(`Applied ${count} ${count === 1 ? 'fix' : 'fixes'}. Undo with Ctrl/Cmd+Z in the editor.`);
+          }}
+          onCancel={() => setShowFixAll(false)}
+        />
+      )}
+
       {toast && (
         <div
           role="status"
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-md px-4 py-2.5 rounded-md bg-[var(--bg-panel)] border border-[var(--border-strong)] shadow-lg text-xs text-[var(--text-primary)]"
+          className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 max-w-md px-4 py-2.5 rounded-lg bg-[var(--text-primary)] text-[var(--bg-panel)] shadow-[0_8px_24px_rgb(0_0_0/0.2)] text-[13px]"
         >
           {toast}
         </div>

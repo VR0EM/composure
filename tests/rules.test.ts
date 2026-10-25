@@ -381,10 +381,9 @@ describe('Security score', () => {
       ],
       { services: ['web', 'db'] },
     );
-    expect(score.categoryScores.privileges).toMatchObject({ findings: 1, worst: 'critical' });
-    // web 70, db 100 -> (70 + 85) / 2 = 78 (rounded)
-    expect(score.categoryScores.privileges.score).toBe(78);
-    expect(score.categoryScores.network).toMatchObject({ findings: 1, worst: 'medium', score: 96 });
+    // Share of services without issues, weighted by the worst finding per service
+    expect(score.categoryScores.privileges).toMatchObject({ findings: 1, worst: 'critical', score: 50 });
+    expect(score.categoryScores.network).toMatchObject({ findings: 1, worst: 'medium', score: 80 });
     expect(score.categoryScores.secrets).toMatchObject({ findings: 0, worst: 'none', score: 100 });
   });
 
