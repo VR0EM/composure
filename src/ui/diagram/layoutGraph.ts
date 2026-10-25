@@ -55,13 +55,33 @@ export interface XYPoint {
 }
 
 export interface DiagramEdgeData extends Record<string, unknown> {
-  rawLabel?: string;
   kind: DiagramEdge['kind'];
   readOnly?: boolean;
+  detail: DiagramEdge['detail'];
   /** Orthogonal route computed by ELK (start, bends, end) in flow coordinates. */
   points?: XYPoint[];
-  showLabel?: boolean;
+  /** Drawn thicker because it is hovered or belongs to the focused node. */
+  emphasized?: boolean;
 }
+
+/**
+ * Two bands along the flow: services (each with its published ports right in
+ * front of it), then the networks and storage they use, always in the last
+ * column. Services spread over several layers when they depend on each other;
+ * dependencies sit further along the flow.
+ */
+function partitionOf(node: DiagramNode): number {
+  return node.kind === 'hostPort' || node.kind === 'service' ? 0 : 1;
+}
+
+/** Keeps resources of one kind together in their column (networks, then volumes, then host paths). */
+const KIND_ORDER: Record<DiagramNode['kind'], number> = {
+  hostPort: 0,
+  service: 1,
+  network: 2,
+  volume: 3,
+  bindMount: 4,
+};
 
 export interface LayoutResult {
   direction: LayoutDirection;
@@ -98,6 +118,17 @@ function getEdgeStyle(edge: DiagramEdge): {
   }
 }
 
+/**
+ * Side by side, nodes of one kind share a width so each column has a straight
+ * edge on both sides. (Stacked top to bottom, nodes keep their own width.)
+ */
+function alignedWidths(nodes: DiagramNode[]): Map<string, number> {
+  const group = (n: DiagramNode) => (n.kind === 'service' || n.kind === 'hostPort' ? n.kind : 'resource');
+  const max = new Map<string, number>();
+  for (const n of nodes) max.set(group(n), Math.max(max.get(group(n)) ?? 0, n.width));
+  return new Map(nodes.map((n) => [n.id, max.get(group(n)) ?? n.width]));
+}
+
 export async function layoutComposeGraph(
   graph: ComposeGraph,
   direction: LayoutDirection = 'RIGHT',
@@ -117,6 +148,8 @@ export async function layoutComposeGraph(
   );
 
   const horizontal = direction === 'RIGHT';
+  const orderedNodes = [...graph.nodes].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
+  const widths = horizontal ? alignedWidths(graph.nodes) : new Map(graph.nodes.map((n) => [n.id, n.width]));
 
   const elkGraph = {
     id: 'root',
@@ -124,22 +157,29 @@ export async function layoutComposeGraph(
       'elk.algorithm': 'layered',
       'elk.direction': direction,
       'elk.edgeRouting': 'ORTHOGONAL',
+      'elk.partitioning.activate': 'true',
       'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+      // Measured over the examples: fewest bends and no small jogs in the lines
+      'elk.layered.nodePlacement.bk.fixedAlignment': 'NONE',
+      'elk.layered.nodePlacement.favorStraightEdges': 'true',
       'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+      'elk.layered.crossingMinimization.greedySwitch.type': 'TWO_SIDED',
+      'elk.layered.thoroughness': '40',
+      'elk.layered.considerModelOrder.strategy': 'PREFER_NODES',
       'elk.layered.mergeEdges': 'false',
-      'elk.spacing.nodeNode': horizontal ? '24' : '24',
-      'elk.layered.spacing.nodeNodeBetweenLayers': horizontal ? '48' : '44',
-      'elk.spacing.edgeNode': '20',
-      'elk.spacing.edgeEdge': '10',
-      'elk.layered.spacing.edgeNodeBetweenLayers': '20',
-      'elk.layered.spacing.edgeEdgeBetweenLayers': '10',
+      'elk.spacing.nodeNode': horizontal ? '20' : '24',
+      'elk.layered.spacing.nodeNodeBetweenLayers': horizontal ? '60' : '52',
+      'elk.spacing.edgeNode': '18',
+      'elk.spacing.edgeEdge': '12',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '22',
+      'elk.layered.spacing.edgeEdgeBetweenLayers': '12',
       'elk.padding': '[top=16,left=16,bottom=16,right=16]',
     },
-    children: graph.nodes.map((node: DiagramNode) => ({
+    children: orderedNodes.map((node: DiagramNode) => ({
       id: node.id,
-      width: node.width,
+      width: widths.get(node.id) ?? node.width,
       height: node.height,
+      layoutOptions: { 'elk.partitioning.partition': String(partitionOf(node)) },
     })),
     edges: validEdges.map((edge: DiagramEdge) => ({
       id: edge.id,
@@ -193,7 +233,7 @@ export async function layoutComposeGraph(
     id: node.id,
     type: node.kind,
     position: positions.get(node.id) ?? { x: 0, y: 0 },
-    width: node.width,
+    width: widths.get(node.id) ?? node.width,
     height: node.height,
     sourcePosition: horizontal ? Position.Right : Position.Bottom,
     targetPosition: horizontal ? Position.Left : Position.Top,
@@ -208,17 +248,17 @@ export async function layoutComposeGraph(
       source: edge.source,
       target: edge.target,
       data: {
-        rawLabel: edge.label,
         kind: edge.kind,
         readOnly: edge.readOnly,
+        detail: edge.detail,
         points: routes.get(edge.id),
       },
       style: edgeStyle,
       markerEnd: {
         type: MarkerType.ArrowClosed,
         color: edgeStyle.stroke,
-        width: 12,
-        height: 12,
+        width: 11,
+        height: 11,
       },
     };
   });

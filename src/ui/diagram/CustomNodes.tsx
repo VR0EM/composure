@@ -7,6 +7,9 @@ import {
   ServiceNodeData,
   Severity,
   VolumeNodeData,
+  formatImageReference,
+  portNodeTitle,
+  shortenHostPath,
 } from '../../core';
 import { DatabaseVolumeIcon, FolderMountIcon, GlobePortIcon, NetworkSwitchIcon } from '../Icons';
 
@@ -30,16 +33,6 @@ const SEVERITY_TEXT: Record<Severity, string> = {
   low: 'var(--sev-low-fg)',
   info: 'var(--sev-info-fg)',
 };
-
-export function formatBindMountShortPath(hostPath: string): string {
-  const trimmed = hostPath.trim();
-  if (!trimmed) return hostPath;
-  const segments = trimmed.split('/').filter((s) => s.length > 0 && s !== '.');
-  if (segments.length < 2) {
-    return trimmed;
-  }
-  return `${segments[segments.length - 2]}/${segments[segments.length - 1]}`;
-}
 
 /** Shared frame for the smaller typed nodes (port, network, volume, bind mount). */
 function TypedNode({
@@ -113,7 +106,7 @@ export function ServiceNode({
   targetPosition,
 }: NodeProps<Node<ServiceNodeData>>) {
   const { service } = data;
-  const imageDisplay = `${data.imageName}:${data.imageTag}`;
+  const imageDisplay = formatImageReference(data);
   const visibleFindings = data.findings.filter((f) => f.severity !== 'info').length;
   const showCount = data.worstSeverity !== 'none' && data.worstSeverity !== 'info' && visibleFindings > 0;
   const strongBorder = data.worstSeverity === 'critical' || data.worstSeverity === 'high' || data.worstSeverity === 'medium';
@@ -121,8 +114,8 @@ export function ServiceNode({
   return (
     <div
       style={{
-        width: width ?? 172,
-        height: height ?? 54,
+        width: width ?? 196,
+        height: height ?? 58,
         borderColor: SEVERITY_BORDER[data.worstSeverity],
         borderWidth: strongBorder ? 1.5 : 1,
       }}
@@ -168,8 +161,8 @@ export function HostPortNode({ data, selected, width, height, sourcePosition }: 
       label="Port"
       tag={data.isPublicInternet ? 'public' : 'loopback'}
       tagColor={data.isPublicInternet ? 'var(--sev-high-fg)' : 'var(--text-secondary)'}
-      title={data.exposureLabel}
-      hoverTitle={data.isPublicInternet ? `${data.exposureLabel}: reachable on every interface` : `${data.exposureLabel}: this host only`}
+      title={portNodeTitle(data)}
+      hoverTitle={`${portNodeTitle(data)}: ${data.isPublicInternet ? 'reachable on every interface' : 'this host only'}`}
       mono
     >
       <Handle type="source" position={sourcePosition ?? Position.Right} className={HANDLE_CLASS} />
@@ -220,7 +213,7 @@ export function VolumeNode({ data, selected, width, height, targetPosition }: No
 }
 
 export function BindMountNode({ data, selected, width, height, targetPosition }: NodeProps<Node<BindMountNodeData>>) {
-  const shortPath = formatBindMountShortPath(data.hostPath);
+  const shortPath = shortenHostPath(data.hostPath);
   const allReadOnly = data.mounts.length > 0 && data.mounts.every((m) => m.readOnly);
   const allReadWrite = data.mounts.length > 0 && data.mounts.every((m) => !m.readOnly);
   const modeLabel = allReadOnly ? 'ro' : allReadWrite ? 'rw' : 'rw/ro';

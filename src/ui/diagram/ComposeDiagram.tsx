@@ -30,9 +30,15 @@ interface ComposeDiagramProps {
   emptyContent?: ReactNode;
 }
 
-const FIT_PADDING = 0.08;
+const FIT_PADDING = 0.05;
 /** Never zoom in further than this on fit, so small stacks stay calm. */
 const FIT_MAX_ZOOM = 1.15;
+/**
+ * Below this zoom node text is too small to read. The automatic fit stops
+ * here and shows the start of the flow (pan for the rest); the Fit button
+ * still shows everything.
+ */
+const MIN_READABLE_ZOOM = 0.6;
 
 function DiagramCanvas({
   graph,
@@ -50,6 +56,7 @@ function DiagramCanvas({
   const [nodes, setNodes] = useState<Node<DiagramNodeData>[]>([]);
   const [edges, setEdges] = useState<Edge<DiagramEdgeData>[]>([]);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number } | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [showLegend, setShowLegend] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -65,7 +72,7 @@ function DiagramCanvas({
   }, [layouts, containerSize]);
 
   const fitDiagram = useCallback(
-    (duration = 140) => {
+    (duration = 140, keepReadable = true) => {
       const bounds = boundsRef.current;
       const el = containerRef.current;
       if (!bounds || !el) return;
@@ -74,9 +81,14 @@ function DiagramCanvas({
       if (cw === 0 || ch === 0) return;
       const usableW = cw * (1 - FIT_PADDING * 2);
       const usableH = ch * (1 - FIT_PADDING * 2);
-      const zoom = Math.min(FIT_MAX_ZOOM, usableW / bounds.width, usableH / bounds.height);
-      const x = (cw - bounds.width * zoom) / 2 - bounds.x * zoom;
-      const y = (ch - bounds.height * zoom) / 2 - bounds.y * zoom;
+      const fit = Math.min(FIT_MAX_ZOOM, usableW / bounds.width, usableH / bounds.height);
+      const zoom = keepReadable ? Math.max(fit, Math.min(MIN_READABLE_ZOOM, FIT_MAX_ZOOM)) : fit;
+      const margin = Math.min(cw, ch) * FIT_PADDING;
+      // Centre what fits; when the diagram is larger than the canvas, start at its top-left corner
+      const x =
+        bounds.width * zoom <= usableW ? (cw - bounds.width * zoom) / 2 - bounds.x * zoom : margin - bounds.x * zoom;
+      const y =
+        bounds.height * zoom <= usableH ? (ch - bounds.height * zoom) / 2 - bounds.y * zoom : margin - bounds.y * zoom;
       setViewport({ x, y, zoom }, { duration });
     },
     [setViewport],
@@ -129,44 +141,52 @@ function DiagramCanvas({
     };
   }, [fitDiagram]);
 
-  // Focus: the selected (or hovered) node and its direct neighbours stay bright
+  // Focus. A selected node keeps its neighbours bright and fades the rest; a
+  // hovered node only highlights its own connections so nothing becomes hard to read.
   const focusId = selectedNodeId ?? hoveredNodeId;
-  const focusSet = useMemo(() => {
-    if (!focusId) return null;
-    const set = new Set<string>([focusId]);
+  const neighbourSet = useMemo(() => {
+    if (!selectedNodeId) return null;
+    const set = new Set<string>([selectedNodeId]);
     for (const e of edges) {
-      if (e.source === focusId) set.add(e.target);
-      if (e.target === focusId) set.add(e.source);
+      if (e.source === selectedNodeId) set.add(e.target);
+      if (e.target === selectedNodeId) set.add(e.source);
     }
     return set;
-  }, [focusId, edges]);
+  }, [selectedNodeId, edges]);
 
   const displayNodes = useMemo(
     () =>
       nodes.map((n) => ({
         ...n,
         selected: n.id === selectedNodeId,
-        className: focusSet && !focusSet.has(n.id) ? 'is-dimmed' : undefined,
+        className: neighbourSet && !neighbourSet.has(n.id) ? 'is-dimmed' : undefined,
       })),
-    [nodes, selectedNodeId, focusSet],
+    [nodes, selectedNodeId, neighbourSet],
   );
 
-  // Edge labels only on hover or when a connected node is selected
   const displayEdges = useMemo(() => {
     return edges.map((edge) => {
-      const connected =
-        focusId !== null && (edge.source === focusId || edge.target === focusId);
-      const showLabel =
-        edge.id === hoveredEdgeId ||
-        (selectedNodeId !== null &&
-          (edge.source === selectedNodeId || edge.target === selectedNodeId));
+      const connected = focusId !== null && (edge.source === focusId || edge.target === focusId);
+      const emphasized = edge.id === hoveredEdgeId || connected;
+      let className: string | undefined;
+      if (hoveredEdgeId && edge.id !== hoveredEdgeId && !connected) className = 'is-muted';
+      else if (focusId && !connected) className = selectedNodeId ? 'is-dimmed' : 'is-muted';
       return {
         ...edge,
-        className: focusId && !connected ? 'is-dimmed' : undefined,
-        data: { ...(edge.data as DiagramEdgeData), showLabel },
+        className,
+        zIndex: emphasized ? 1 : 0,
+        data: { ...(edge.data as DiagramEdgeData), emphasized },
       };
     });
   }, [edges, hoveredEdgeId, selectedNodeId, focusId]);
+
+  const hoveredDetail = hoveredEdgeId ? edges.find((e) => e.id === hoveredEdgeId)?.data?.detail : undefined;
+
+  const trackPointer = (event: React.MouseEvent) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setTooltip({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+  };
 
   if (graph.nodes.length === 0) {
     return (
@@ -205,11 +225,14 @@ function DiagramCanvas({
         onPaneClick={() => {
           onSelectNode(null, null);
         }}
-        onEdgeMouseEnter={(_event, edge) => {
+        onEdgeMouseEnter={(event, edge) => {
           setHoveredEdgeId(edge.id);
+          trackPointer(event);
         }}
+        onEdgeMouseMove={(event) => trackPointer(event)}
         onEdgeMouseLeave={() => {
           setHoveredEdgeId(null);
+          setTooltip(null);
         }}
         minZoom={0.15}
         maxZoom={2.5}
@@ -222,6 +245,15 @@ function DiagramCanvas({
           color="var(--canvas-dot)"
         />
       </ReactFlow>
+
+      {hoveredDetail && tooltip && (
+        <EdgeTooltip
+          detail={hoveredDetail}
+          x={tooltip.x}
+          y={tooltip.y}
+          containerWidth={containerSize.width || containerRef.current?.clientWidth || 0}
+        />
+      )}
 
       {/* Toolbar and legend */}
       <div className="absolute bottom-3 right-3 z-10 flex flex-col items-end gap-2">
@@ -240,6 +272,9 @@ function DiagramCanvas({
               <LegendLine label="depends_on" style={{ borderTopWidth: 1, borderStyle: 'dashed', borderColor: 'var(--edge-depends)' }} />
               <LegendLine label="network_mode: service" style={{ borderTopWidth: 1, borderStyle: 'dashed', borderColor: 'var(--node-network-border)' }} />
             </div>
+            <p className="pt-2.5 border-t border-[var(--border-subtle)] text-[var(--text-muted)] leading-snug">
+              Hover a line for details. Click a node to see its connections.
+            </p>
           </div>
         )}
 
@@ -250,7 +285,7 @@ function DiagramCanvas({
           <ToolbarButton label="Zoom in" onClick={() => zoomIn({ duration: 120 })}>
             +
           </ToolbarButton>
-          <ToolbarButton label="Fit to view" onClick={() => fitDiagram(140)}>
+          <ToolbarButton label="Fit to view" onClick={() => fitDiagram(140, false)}>
             Fit
           </ToolbarButton>
           <ToolbarButton label="Legend" onClick={() => setShowLegend((v) => !v)} active={showLegend}>
@@ -258,6 +293,37 @@ function DiagramCanvas({
           </ToolbarButton>
         </div>
       </div>
+    </div>
+  );
+}
+
+function EdgeTooltip({
+  detail,
+  x,
+  y,
+  containerWidth,
+}: {
+  detail: DiagramEdgeData['detail'];
+  x: number;
+  y: number;
+  containerWidth: number;
+}) {
+  const WIDTH = 280;
+  const flip = x + 16 + WIDTH > containerWidth;
+  return (
+    <div
+      role="tooltip"
+      className="pointer-events-none absolute z-20 max-w-[280px] px-2.5 py-2 rounded-md bg-[var(--bg-panel)] border border-[var(--border-strong)] shadow-[0_6px_20px_rgb(0_0_0/0.16)]"
+      style={{
+        left: flip ? undefined : x + 14,
+        right: flip ? Math.max(8, containerWidth - x + 14) : undefined,
+        top: y + 14,
+      }}
+    >
+      <div className="text-xs font-medium text-[var(--text-primary)] font-mono break-all leading-snug">
+        {detail.title}
+      </div>
+      <div className="mt-0.5 text-xs text-[var(--text-secondary)] leading-snug">{detail.text}</div>
     </div>
   );
 }

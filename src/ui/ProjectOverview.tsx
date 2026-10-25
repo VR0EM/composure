@@ -6,6 +6,7 @@ import {
   ComposeModel,
   Finding,
   SecurityScoreSummary,
+  formatImageReference,
   getWorstSeverity,
   splitImageReference,
 } from '../core';
@@ -124,7 +125,7 @@ export function ProjectOverview({ model, findings, score, onSelectService }: Pro
       const { imageName, imageTag } = splitImageReference(svc.image, svc.build?.context);
       return {
         name: svc.name,
-        image: svc.image ? `${imageName}:${imageTag}` : imageName,
+        image: svc.image ? formatImageReference({ imageName, imageTag }) : imageName,
         score: score.serviceScores[svc.name] ?? 100,
         worst: getWorstSeverity(svcFindings),
         count: svcFindings.filter((f) => f.severity !== 'info').length,

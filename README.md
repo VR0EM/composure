@@ -37,7 +37,8 @@ Paste or drop a Compose file to immediately inspect:
   - `network_mode` (`host`, `none`, `service:<name>`, `container:<name>`), `expose` vs `ports`, `tmpfs`, `profiles`, `x-` extension fields
 - **Live Editor & Diagram**
   - CodeMirror 6 editor with YAML highlighting, severity gutter markers, inline error/warning squiggles with tooltips, search (`Ctrl/Cmd+F`), and context-aware autocomplete for Compose keys and common values (`Ctrl+Space`)
-  - Layered graph layout with `elkjs`, running in a Web Worker so typing never stutters
+  - Layered graph layout with `elkjs`, running in a Web Worker so typing never stutters: each service sits next to its published ports, with networks and storage lined up in their own column
+  - No labels on top of lines: hover a connection for a plain explanation (for example `legacy-webapp → /etc`, host folder mounted at `/host-etc`, read-write), click a node to highlight what it is connected to
   - Keeps the last valid diagram while you are mid-edit with invalid YAML
 - **Safe Fixes**
   - Fixes are precise text edits, never a rewrite of the file: comments, quoting, and ordering stay as you wrote them

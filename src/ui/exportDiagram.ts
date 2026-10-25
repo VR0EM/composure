@@ -1,4 +1,4 @@
-import { ComposeGraph, DiagramEdge, Severity } from '../core';
+import { ComposeGraph, DiagramEdge, Severity, formatImageReference, portNodeTitle, shortenHostPath } from '../core';
 import {
   LayoutDirection,
   buildRoundedPath,
@@ -343,14 +343,9 @@ export async function renderGraphToSvgString(
       `    <path d="${pathD}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}"${dashAttr} marker-end="url(#${markerId})" />`,
     );
 
-    // Save label if informative
-    if (edge.label && edge.label !== 'depends_on') {
-      const mid = polylineMidpoint(shifted);
-      edgeLabelsToRender.push({
-        mid,
-        label: edge.label,
-        isMono: edge.kind === 'port' || edge.label.startsWith(':'),
-      });
+    // Only fixed IP addresses are worth a label in the static image
+    if (edge.kind === 'network' && edge.label) {
+      edgeLabelsToRender.push({ mid: polylineMidpoint(shifted), label: edge.label, isMono: true });
     }
   }
   parts.push(`  </g>`);
@@ -361,8 +356,11 @@ export async function renderGraphToSvgString(
 
   for (const flowNode of nodes) {
     const orig = graph.nodes.find((n) => n.id === flowNode.id);
-    const w = orig?.width ?? 172;
-    const h = orig?.height ?? 54;
+    const w = flowNode.width ?? orig?.width ?? 184;
+    const h = flowNode.height ?? orig?.height ?? 58;
+    // Characters that fit on one line (Geist ~7.6px sans, 7.2px mono, 14px padding)
+    const sansChars = Math.max(8, Math.floor((w - 28) / 7.6));
+    const monoChars = Math.max(8, Math.floor((w - 28) / 7.2));
     const x = flowNode.position.x + offsetX;
     const y = flowNode.position.y + offsetY;
     const data = flowNode.data;
@@ -370,14 +368,12 @@ export async function renderGraphToSvgString(
     if (data.kind === 'service') {
       const borderStroke = getSeverityBorder(data.worstSeverity, colors);
       const title = data.service.name;
-      const subtitle = `${data.imageName}:${data.imageTag}`;
+      const subtitle = formatImageReference(data);
 
       parts.push(`    <g transform="translate(${x}, ${y})" filter="url(#node-shadow)">
       <rect width="${w}" height="${h}" rx="8" fill="${colors.nodeServiceBg}" stroke="${borderStroke}" stroke-width="1.5" />
-      <text x="14" y="24" fill="${colors.textPrimary}" font-size="13" font-weight="600">${escapeXml(truncateText(title, 22))}</text>
-      <!-- Image tag pill -->
-      <rect x="12" y="32" width="${w - 24}" height="20" rx="4" fill="${colors.badgeBg}" />
-      <text x="18" y="46" fill="${colors.textSecondary}" font-size="11" class="mono">${escapeXml(truncateText(subtitle, 24))}</text>
+      <text x="14" y="25" fill="${colors.textPrimary}" font-size="13" font-weight="600">${escapeXml(truncateText(title, sansChars))}</text>
+      <text x="14" y="44" fill="${colors.textSecondary}" font-size="12" class="mono">${escapeXml(truncateText(subtitle, monoChars))}</text>
     </g>`);
     } else {
       let typeLabel = 'node';
@@ -389,7 +385,7 @@ export async function renderGraphToSvgString(
 
       if (data.kind === 'hostPort') {
         typeLabel = data.isPublicInternet ? 'PUBLIC PORT' : 'LOOPBACK PORT';
-        title = data.exposureLabel;
+        title = portNodeTitle(data);
         isMono = true;
         bg = colors.nodePortBg;
         border = colors.nodePortBorder;
@@ -417,14 +413,7 @@ export async function renderGraphToSvgString(
         const allRw = data.mounts.length > 0 && data.mounts.every((m) => !m.readOnly);
         const modeLabel = allRo ? 'ro' : allRw ? 'rw' : 'rw/ro';
         typeLabel = `MOUNT (${modeLabel})`;
-        const segments = data.hostPath
-          .trim()
-          .split('/')
-          .filter((s) => s.length > 0 && s !== '.');
-        title =
-          segments.length >= 2
-            ? `${segments[segments.length - 2]}/${segments[segments.length - 1]}`
-            : data.hostPath.trim() || data.hostPath;
+        title = shortenHostPath(data.hostPath);
         isMono = true;
         bg = colors.nodeBindBg;
         border = colors.nodeBindBorder;
@@ -436,7 +425,7 @@ export async function renderGraphToSvgString(
       parts.push(`    <g transform="translate(${x}, ${y})" filter="url(#node-shadow)">
       <rect width="${w}" height="${h}" rx="8" fill="${bg}" stroke="${border}" stroke-width="1.25" />
       <text x="12" y="20" fill="${fg}" font-size="10" font-weight="700" letter-spacing="0.5">${escapeXml(typeLabel)}</text>
-      <text x="12" y="38" fill="${colors.textPrimary}" font-size="12" font-weight="500"${fontClass}>${escapeXml(truncateText(title, 22))}</text>
+      <text x="12" y="38" fill="${colors.textPrimary}" font-size="12" font-weight="500"${fontClass}>${escapeXml(truncateText(title, isMono ? monoChars : sansChars))}</text>
     </g>`);
     }
   }
