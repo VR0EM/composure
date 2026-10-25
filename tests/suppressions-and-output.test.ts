@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   addSuppressionComment,
@@ -173,6 +176,22 @@ describe('CLI', () => {
     const bad = run(['--disable', 'CMP999', 'tests/fixtures/rules-negative.yml']);
     expect(bad.code).toBe(2);
     expect(bad.err).toContain('CMP999');
+  });
+
+  it('applies fixes in place with --fix', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'composure-'));
+    const file = join(dir, 'compose.yaml');
+    try {
+      writeFileSync(file, 'services:\n  web:\n    image: nginx:1.27\n    ports:\n      - "8080:80"\n');
+      const { code } = run(['--fix', '--no-color', '--fail-on', 'none', file]);
+      expect(code).toBe(0);
+      const fixed = readFileSync(file, 'utf-8');
+      expect(fixed).toContain('"127.0.0.1:8080:80"');
+      expect(fixed).toContain('no-new-privileges:true');
+      expect(run(['--fix', '-']).code).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('fails on YAML syntax errors', () => {

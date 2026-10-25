@@ -12,6 +12,7 @@ import {
   SEVERITY_ORDER,
   Severity,
   analyzeCompose,
+  applyAutofixes,
   buildSarifLog,
   generateFindingsMarkdown,
 } from '../core';
@@ -30,6 +31,7 @@ interface CliOptions {
   disabled: string[];
   color: boolean;
   failOnProblems: boolean;
+  fix: boolean;
 }
 
 const DEFAULT_FILES = ['compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml'];
@@ -49,6 +51,7 @@ Options:
                            critical, high (default), medium, low, info, none
       --min-severity <lvl> hide findings below this level in text output (default: low)
       --disable <ids>      comma-separated rule IDs to skip, e.g. CMP007,CMP016
+      --fix                apply all safe automatic fixes and write the files back
       --no-fail-on-problems  do not exit 1 on Compose errors (undefined networks, ...)
       --no-color           disable colored output (also honors NO_COLOR)
       --list-rules         print all rules and exit
@@ -80,6 +83,7 @@ function parseArgs(argv: string[]): CliOptions | 'help' | 'version' | 'list-rule
     disabled: [],
     color: process.stdout.isTTY === true && !process.env['NO_COLOR'],
     failOnProblems: true,
+    fix: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -133,6 +137,9 @@ function parseArgs(argv: string[]): CliOptions | 'help' | 'version' | 'list-rule
       case '--no-fail-on-problems':
         opts.failOnProblems = false;
         break;
+      case '--fix':
+        opts.fix = true;
+        break;
       default:
         if (arg.startsWith('-') && arg !== '-') throw new UsageError(`Unknown option ${arg}`);
         opts.files.push(arg);
@@ -142,6 +149,10 @@ function parseArgs(argv: string[]): CliOptions | 'help' | 'version' | 'list-rule
   const known = new Set(ALL_RULES.map((r) => r.id));
   const unknown = opts.disabled.filter((id) => !known.has(id));
   if (unknown.length > 0) throw new UsageError(`Unknown rule ID(s) in --disable: ${unknown.join(', ')}`);
+
+  if (opts.fix && opts.files.includes('-')) {
+    throw new UsageError('--fix cannot be used with standard input; pass a file path.');
+  }
 
   if (opts.files.length === 0) {
     const found = DEFAULT_FILES.find((f) => existsSync(f));
@@ -177,8 +188,8 @@ interface FileReport {
   result: AnalysisResult;
 }
 
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
+function plural(n: number, word: string, pluralWord = `${word}s`): string {
+  return `${n} ${n === 1 ? word : pluralWord}`;
 }
 
 function severityRank(sev: Severity): number {
@@ -375,6 +386,18 @@ export function main(argv: string[]): number {
     }
     const displayPath =
       file === '-' ? 'stdin' : relative(process.cwd(), resolve(file)).split('\\').join('/') || file;
+    if (opts.fix) {
+      const fixed = applyAutofixes(text, { disabledRuleIds: opts.disabled });
+      if (fixed.applied.length > 0) {
+        writeFileSync(file, fixed.text);
+        text = fixed.text;
+      }
+      process.stderr.write(
+        `composure: ${displayPath}: applied ${plural(fixed.applied.length, 'fix', 'fixes')}` +
+          (fixed.skipped.length > 0 ? `, ${fixed.skipped.length} need a manual change` : '') +
+          '\n',
+      );
+    }
     reports.push({
       path: file,
       displayPath,

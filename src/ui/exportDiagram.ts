@@ -119,7 +119,7 @@ const THEMES: Record<'dark' | 'light', SvgThemeColors> = {
 
     sevCriticalBorder: '#d92d20',
     sevHighBorder: '#ec6a1e',
-    sevMediumBorder: '#d99a06',
+    sevMediumBorder: '#b98000',
     sevLowBorder: '#cfcec9',
     sevInfoBorder: '#cfcec9',
 

@@ -381,7 +381,7 @@ export function FindingsPanel({
                     <button
                       type="button"
                       onClick={() => onJumpToLine(f.suppression.line)}
-                      className="w-full pl-4 pr-4 py-2.5 text-left flex items-start gap-2.5 text-xs hover:bg-[var(--bg-elevated)] border-b border-[var(--border-subtle)] last:border-b-0"
+                      className="w-full pl-4 pr-4 py-2.5 text-left flex items-start gap-2.5 text-xs hover:bg-[var(--bg-elevated)] border-b border-[var(--border-subtle)]"
                     >
                       <SeverityDot severity={f.severity} className="mt-1 opacity-40" />
                       <span className="flex-1 min-w-0">
@@ -462,7 +462,7 @@ function RuleGroupRow({
       : `${services.join(', ')} · ${group.items.length} places`;
 
   return (
-    <div className="border-b border-[var(--border-subtle)] last:border-b-0">
+    <div className="border-b border-[var(--border-subtle)]">
       <button
         type="button"
         aria-expanded={expanded}

@@ -53,7 +53,7 @@ export function IconButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`h-7 w-7 inline-flex items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors ${className}`}
+      className={`h-7 w-7 ${/\bhidden\b/.test(className) ? '' : 'inline-flex'} items-center justify-center rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors ${className}`}
       {...rest}
     >
       {children}
