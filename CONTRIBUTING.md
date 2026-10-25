@@ -37,10 +37,11 @@ services:
   );
 }
 
-export const CMP022: Rule = {
-  id: 'CMP022',
+export const CMP023: Rule = {
+  id: 'CMP023',
   title: 'Short, clear title', // at most 26 characters
   severity: 'medium', // 'critical' | 'high' | 'medium' | 'low' | 'info'
+  category: 'privileges', // area for the score breakdown, see src/core/categories.ts
   description: 'Why this configuration is a risk, in one sentence.',
   fix: buildFix('app'),
   references: [
@@ -75,6 +76,7 @@ If the fix is mechanical and safe, attach an `autofix` with structured operation
 ```ts
 autofix: {
   label: 'Add no-new-privileges:true',
+  caution: 'setuid tools such as sudo stop working inside the container.', // when behavior can change
   operations: [
     { kind: 'addListItem', service: service.name, key: 'security_opt', item: 'no-new-privileges:true', compare: 'securityOpt' },
   ],
