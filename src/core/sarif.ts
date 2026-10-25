@@ -57,7 +57,7 @@ function location(uri: string, line: number, column?: number) {
   ];
 }
 
-export function buildSarifLog(inputs: SarifInput[], toolVersion = '0.2.0'): object {
+export function buildSarifLog(inputs: SarifInput[], toolVersion = '0.3.0'): object {
   const diagnosticCodes = new Set<string>();
   for (const input of inputs) {
     for (const d of input.diagnostics ?? []) diagnosticCodes.add(d.code);

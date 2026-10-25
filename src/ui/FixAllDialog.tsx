@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useState } from 'react';
 import { Finding, applyAutofixes, findingKey } from '../core';
 import { DiffView, Dialog } from './FixPreviewDialog';
 import { Button, SeverityDot } from './primitives';
@@ -49,10 +49,13 @@ export function FixAllDialog({ yamlText, findings, disabledRuleIds, onApply, onC
   const groups = useMemo(() => groupFixes(fixable), [fixable]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(fixable.map(findingKey)));
 
+  // Re-running every fix can take a moment on big files; keep the checkboxes responsive
+  const deferredSelected = useDeferredValue(selected);
   const result = useMemo(
-    () => applyAutofixes(yamlText, { disabledRuleIds, selected }),
-    [yamlText, disabledRuleIds, selected],
+    () => applyAutofixes(yamlText, { disabledRuleIds, selected: deferredSelected }),
+    [yamlText, disabledRuleIds, deferredSelected],
   );
+  const pending = deferredSelected !== selected;
 
   const toggle = (keys: string[], on: boolean) =>
     setSelected((prev) => {
@@ -158,7 +161,9 @@ export function FixAllDialog({ yamlText, findings, disabledRuleIds, onApply, onC
           })}
         </ul>
       </div>
-      <div className="flex-1 min-w-0 min-h-[240px] overflow-auto bg-[var(--bg-app)]">
+      <div
+        className={`flex-1 min-w-0 min-h-[240px] overflow-auto bg-[var(--bg-app)] transition-opacity ${pending ? 'opacity-60' : ''}`}
+      >
         <DiffView before={yamlText} after={result.text} context={2} />
       </div>
     </Dialog>
