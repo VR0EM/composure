@@ -46,6 +46,7 @@ export const CMP008: Rule = {
   id: 'CMP008',
   title: 'Profile unconfined',
   severity: 'high',
+  category: 'isolation',
   description:
     'Disables default syscall filtering or mandatory access control.',
   fix: buildFix('app', 'seccomp:unconfined'),
@@ -77,6 +78,7 @@ export const CMP008: Rule = {
           references: this.references,
           autofix: {
             label: `Remove ${opt.value}`,
+            caution: 'Check that the service still starts under the default profile.',
             operations: [
               {
                 kind: 'removeListItem',

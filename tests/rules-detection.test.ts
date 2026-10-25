@@ -14,6 +14,7 @@ import {
   CMP019,
   CMP020,
   CMP021,
+  CMP022,
   ComposeModel,
   Rule,
   parseCompose,
@@ -211,5 +212,16 @@ describe('Risks that were previously missed', () => {
       ),
     );
     expect(findings).toHaveLength(2);
+  });
+
+  it('CMP022 flags a missing restart policy, accepting deploy.restart_policy', () => {
+    expect(check(CMP022, svc(''))[0]?.autofix?.operations[0]).toMatchObject({ key: 'restart', value: 'unless-stopped' });
+    expect(check(CMP022, svc('    restart: "no"\n'))).toHaveLength(0);
+    expect(check(CMP022, svc('    deploy:\n      restart_policy:\n        condition: on-failure\n'))).toHaveLength(0);
+  });
+
+  it('CMP004 treats SSH, RDP and VNC as sensitive ports', () => {
+    const findings = check(CMP004, svc('    ports:\n      - "2222:22"\n      - "3389:3389"\n'));
+    expect(findings.map((f) => f.severity)).toEqual(['high', 'high']);
   });
 });

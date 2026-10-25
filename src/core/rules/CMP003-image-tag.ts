@@ -73,6 +73,7 @@ export const CMP003: Rule = {
   id: 'CMP003',
   title: 'Unpinned image tag',
   severity: 'medium',
+  category: 'images',
   description:
     'Mutable tags can pull different code on each deploy; pin a version and `@sha256` digest.',
   fix: buildFix('app', 'nginx', '1.27-alpine'),

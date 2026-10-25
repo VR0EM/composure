@@ -17,6 +17,7 @@ export const CMP001: Rule = {
   id: 'CMP001',
   title: 'Privileged mode enabled',
   severity: 'critical',
+  category: 'privileges',
   description:
     'Disables container isolation and grants root access to all host devices.',
   fix: buildFix('app'),
@@ -43,6 +44,7 @@ export const CMP001: Rule = {
           references: this.references,
           autofix: {
             label: 'Set privileged: false',
+            caution: 'The service loses access to host devices; add back only the specific devices or capabilities it needs.',
             operations: [
               { kind: 'setScalar', service: service.name, key: 'privileged', value: false },
             ],

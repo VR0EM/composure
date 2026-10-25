@@ -23,6 +23,7 @@ export const CMP007: Rule = {
   id: 'CMP007',
   title: 'Capabilities not dropped',
   severity: 'low',
+  category: 'privileges',
   description:
     'Dropping `ALL` default Linux capabilities reduces the kernel attack surface.',
   fix: buildFix('app'),
@@ -53,6 +54,7 @@ export const CMP007: Rule = {
           references: this.references,
           autofix: {
             label: 'Add cap_drop: ALL',
+            caution: 'Some images need a few capabilities back (often CHOWN, SETUID, SETGID) through cap_add.',
             operations: [
               { kind: 'addListItem', service: service.name, key: 'cap_drop', item: 'ALL', compare: 'capability' },
             ],

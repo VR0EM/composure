@@ -7,7 +7,16 @@ import {
   SuppressedFinding,
   groupFindingsBySeverity,
 } from '../core';
-import { ChevronDownIcon } from './Icons';
+import { CheckIcon, ChevronDownIcon, CopyIcon, ExternalLinkIcon, WrenchIcon } from './Icons';
+import {
+  Button,
+  SEVERITY_LABELS,
+  SEVERITY_SOLID,
+  SEVERITY_TEXT,
+  SegmentedControl,
+  SeverityDot,
+  scoreColor,
+} from './primitives';
 
 interface FindingsPanelProps {
   findings: Finding[];
@@ -18,47 +27,14 @@ interface FindingsPanelProps {
   onJumpToLine: (line: number) => void;
   onApplyFix?: (finding: Finding) => void;
   onSuppress?: (finding: Finding) => void;
+  onFixAll?: () => void;
 }
 
 const SCORE_EXPLANATION =
   'Each service starts at 100 and loses points per finding (critical 30, high 15, medium 6, low 2). ' +
   'The project score averages the weakest service with the mean of all services. ' +
-  'Open critical findings cap the score at 59 (D), high findings at 74 (C). ' +
-  'Accepted risks (composure-ignore comments) do not count.';
-
-export const SEVERITY_DOT_COLORS: Record<Severity, string> = {
-  critical: 'bg-[var(--sev-critical-border)]',
-  high: 'bg-[var(--sev-high-border)]',
-  medium: 'bg-[var(--sev-medium-border)]',
-  low: 'bg-[var(--sev-low-border)]',
-  info: 'bg-[var(--sev-info-border)]',
-};
-
-const SEVERITY_GROUP_STYLES: Record<Severity, string> = {
-  critical: 'bg-[var(--sev-critical-group-bg)] text-[var(--sev-critical-fg)]',
-  high: 'bg-[var(--sev-high-group-bg)] text-[var(--sev-high-fg)]',
-  medium: 'bg-[var(--sev-medium-group-bg)] text-[var(--sev-medium-fg)]',
-  low: 'bg-[var(--sev-low-group-bg)] text-[var(--sev-low-fg)]',
-  info: 'bg-[var(--sev-info-group-bg)] text-[var(--sev-info-fg)]',
-};
-
-const SEVERITY_CHIP_ACTIVE_STYLES: Record<Severity, string> = {
-  critical:
-    'bg-[var(--sev-critical-chip-bg)] text-[var(--sev-critical-fg)] border-transparent font-medium',
-  high: 'bg-[var(--sev-high-chip-bg)] text-[var(--sev-high-fg)] border-transparent font-medium',
-  medium:
-    'bg-[var(--sev-medium-chip-bg)] text-[var(--sev-medium-fg)] border-transparent font-medium',
-  low: 'bg-[var(--sev-low-chip-bg)] text-[var(--sev-low-fg)] border-transparent font-medium',
-  info: 'bg-[var(--sev-info-chip-bg)] text-[var(--sev-info-fg)] border-transparent font-medium',
-};
-
-const SEVERITY_LABELS: Record<Severity, string> = {
-  critical: 'Critical',
-  high: 'High',
-  medium: 'Medium',
-  low: 'Low',
-  info: 'Info',
-};
+  'Open critical findings cap the score at 59, high findings at 74. ' +
+  'Accepted risks do not count.';
 
 export function renderInlineCode(text: string): ReactNode {
   const parts = text.split(/(`[^`]+`)/g);
@@ -67,7 +43,7 @@ export function renderInlineCode(text: string): ReactNode {
       return (
         <code
           key={index}
-          className="font-mono text-xs text-[var(--text-primary)] bg-[var(--bg-elevated)] px-1 py-0.5 rounded"
+          className="font-mono text-[0.92em] text-[var(--text-primary)] bg-[var(--bg-subtle)] px-1 py-px rounded"
         >
           {part.slice(1, -1)}
         </code>
@@ -77,22 +53,32 @@ export function renderInlineCode(text: string): ReactNode {
   });
 }
 
-function parseFixContent(fix: string): {
-  text: string;
-  yamlCode: string | null;
-} {
+function parseFixContent(fix: string): { text: string; yamlCode: string | null } {
   const match = /([\s\S]*?)```yaml\n([\s\S]*?)```/.exec(fix);
   if (match) {
-    return {
-      text: (match[1] ?? '').trim(),
-      yamlCode: (match[2] ?? '').trim(),
-    };
+    return { text: (match[1] ?? '').trim(), yamlCode: (match[2] ?? '').trim() };
   }
   return { text: fix, yamlCode: null };
 }
 
-function formatFindingExplanation(finding: Finding): string {
-  return `${finding.message} ${finding.description}`;
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+function verdict(counts: Record<Severity, number>): string {
+  if (counts.critical > 0) {
+    return `${plural(counts.critical, 'critical issue')} to fix before deploying.`;
+  }
+  if (counts.high > 0) {
+    return `No critical issues. ${plural(counts.high, 'high-severity finding')} left.`;
+  }
+  if (counts.medium > 0) {
+    return `No critical or high issues. ${plural(counts.medium, 'medium finding')} left to harden.`;
+  }
+  if (counts.low > 0) {
+    return `Solid baseline. ${plural(counts.low, 'low-severity improvement')} left.`;
+  }
+  return 'No findings for the enabled rules.';
 }
 
 interface RuleFindingGroup {
@@ -111,13 +97,7 @@ function groupFindingsByRule(list: Finding[]): RuleFindingGroup[] {
     if (existing) {
       existing.items.push(f);
     } else {
-      map.set(key, {
-        key,
-        ruleId: f.ruleId,
-        title: f.title,
-        severity: f.severity,
-        items: [f],
-      });
+      map.set(key, { key, ruleId: f.ruleId, title: f.title, severity: f.severity, items: [f] });
     }
   }
   return Array.from(map.values());
@@ -126,154 +106,124 @@ function groupFindingsByRule(list: Finding[]): RuleFindingGroup[] {
 export function FindingsPanel({
   findings,
   suppressed,
-  score: scoreSummary,
+  score,
   onToggleRule,
   onSelectFinding,
   onJumpToLine,
   onApplyFix,
   onSuppress,
+  onFixAll,
 }: FindingsPanelProps) {
   const [groupBy, setGroupBy] = useState<'severity' | 'service'>('severity');
-  // Info hidden by default
-  const [visibleSeverities, setVisibleSeverities] = useState<Set<Severity>>(
-    () => new Set<Severity>(['critical', 'high', 'medium', 'low']),
-  );
-  // Low collapsed by default
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    () => new Set<string>(['low']),
-  );
-  // Only one finding or rule group expanded at a time
+  const [hiddenSeverities, setHiddenSeverities] = useState<Set<Severity>>(() => new Set(['info']));
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set(['low']));
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
-
   const [showSuppressed, setShowSuppressed] = useState(false);
-  const filteredFindings = useMemo(
-    () => findings.filter((f) => visibleSeverities.has(f.severity)),
-    [findings, visibleSeverities],
-  );
 
-  const groupedBySeverity = useMemo(
-    () => groupFindingsBySeverity(filteredFindings),
-    [filteredFindings],
-  );
+  const counts = score.countsBySeverity;
+  const fixableCount = findings.filter((f) => f.autofix).length;
+  const total = findings.length;
 
-  const groupedByService = useMemo(() => {
+  const filtered = useMemo(
+    () => findings.filter((f) => !hiddenSeverities.has(f.severity)),
+    [findings, hiddenSeverities],
+  );
+  const bySeverity = useMemo(() => groupFindingsBySeverity(filtered), [filtered]);
+  const byService = useMemo(() => {
     const map = new Map<string, Finding[]>();
-    for (const f of filteredFindings) {
-      const list = map.get(f.service) ?? [];
-      list.push(f);
-      map.set(f.service, list);
-    }
-    return Array.from(map.entries());
-  }, [filteredFindings]);
+    for (const f of filtered) map.set(f.service, [...(map.get(f.service) ?? []), f]);
+    return Array.from(map.entries()).sort(
+      (a, b) => (score.serviceScores[a[0]] ?? 100) - (score.serviceScores[b[0]] ?? 100),
+    );
+  }, [filtered, score.serviceScores]);
 
-  const nonZeroSeverities = useMemo(
-    () => SEVERITY_ORDER.filter((sev) => scoreSummary.countsBySeverity[sev] > 0),
-    [scoreSummary],
-  );
-
-  const toggleSeverityFilter = (sev: Severity) => {
-    setVisibleSeverities((prev) => {
+  const toggleSeverity = (sev: Severity) =>
+    setHiddenSeverities((prev) => {
       const next = new Set(prev);
-      if (next.has(sev)) {
-        next.delete(sev);
-      } else {
-        next.add(sev);
-      }
+      if (next.has(sev)) next.delete(sev);
+      else next.add(sev);
       return next;
     });
-  };
 
-  const toggleGroupCollapse = (groupKey: string) => {
+  const toggleGroup = (key: string) =>
     setCollapsedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(groupKey)) {
-        next.delete(groupKey);
-      } else {
-        next.add(groupKey);
-      }
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
-  };
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg-panel)] text-[var(--text-primary)] overflow-hidden">
-      {/* Top Summary: 40px Grade letter on the left, Score below Grade label, Group toggle, and Filter chips */}
-      <div className="px-4 py-3 border-b border-[var(--border-subtle)] space-y-2.5 shrink-0">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5" title={SCORE_EXPLANATION}>
-            <div
-              className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-base font-mono border shadow-xs ${
-                scoreSummary.grade === 'A'
-                  ? 'bg-[var(--node-volume-bg)] text-[var(--node-volume-fg)] border-[var(--node-volume-border)]'
-                  : scoreSummary.grade === 'B' || scoreSummary.grade === 'C'
-                  ? 'bg-[var(--sev-medium-group-bg)] text-[var(--sev-medium-fg)] border-[var(--sev-medium-border)]'
-                  : 'bg-[var(--sev-critical-group-bg)] text-[var(--sev-critical-fg)] border-[var(--sev-critical-border)]'
-              }`}
-            >
-              {scoreSummary.grade}
-            </div>
-            <div className="flex flex-col justify-center">
-              <span className="text-xs text-[var(--text-secondary)] leading-tight">
-                Posture Score
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Summary */}
+      <div className="px-4 pt-3.5 pb-3 border-b border-[var(--border-subtle)] space-y-3 shrink-0">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0" title={SCORE_EXPLANATION}>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[26px] leading-none font-semibold tracking-tight tabular text-[var(--text-primary)]">
+                {score.score}
               </span>
-              <span className="text-xs font-semibold text-[var(--text-primary)] leading-tight">
-                {scoreSummary.score}/100
+              <span className="text-xs text-[var(--text-muted)] tabular">/100</span>
+              <span
+                className="ml-2 text-[13px] font-semibold"
+                style={{ color: scoreColor(score.score) }}
+              >
+                Grade {score.grade}
               </span>
             </div>
+            <p className="mt-1.5 text-xs text-[var(--text-secondary)] leading-snug">{verdict(counts)}</p>
           </div>
-
-          {/* Group by Severity / Service toggle */}
-          <div className="inline-flex rounded bg-[var(--bg-elevated)] p-0.5 border border-[var(--border-subtle)] text-xs shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                setGroupBy('severity');
-                setExpandedKey(null);
-              }}
-              className={`px-2 py-0.5 rounded transition-colors ${
-                groupBy === 'severity'
-                  ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Severity
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setGroupBy('service');
-                setExpandedKey(null);
-              }}
-              className={`px-2 py-0.5 rounded transition-colors ${
-                groupBy === 'service'
-                  ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-            >
-              Service
-            </button>
-          </div>
+          {onFixAll && fixableCount > 0 && (
+            <Button variant="primary" onClick={onFixAll} title="Review and apply all automatic fixes">
+              <WrenchIcon className="w-3.5 h-3.5" />
+              Fix all
+              <span className="tabular opacity-70">{fixableCount}</span>
+            </Button>
+          )}
         </div>
 
-        {/* Filter chips per severity (tinted background when active, hide chips with count 0) */}
-        {nonZeroSeverities.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {nonZeroSeverities.map((sev) => {
-              const active = visibleSeverities.has(sev);
-              const count = scoreSummary.countsBySeverity[sev];
+        {total > 0 && (
+          <div
+            className="flex h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]"
+            role="img"
+            aria-label={SEVERITY_ORDER.map((s) => `${counts[s]} ${s}`).join(', ')}
+          >
+            {SEVERITY_ORDER.map((sev) =>
+              counts[sev] > 0 ? (
+                <span
+                  key={sev}
+                  className="h-full transition-opacity"
+                  style={{
+                    width: `${(counts[sev] / total) * 100}%`,
+                    backgroundColor: SEVERITY_SOLID[sev],
+                    opacity: hiddenSeverities.has(sev) ? 0.25 : 1,
+                  }}
+                />
+              ) : null,
+            )}
+          </div>
+        )}
+
+        {total > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            {SEVERITY_ORDER.filter((sev) => counts[sev] > 0).map((sev) => {
+              const hidden = hiddenSeverities.has(sev);
               return (
                 <button
                   key={sev}
                   type="button"
-                  onClick={() => toggleSeverityFilter(sev)}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs transition-colors border ${
-                    active
-                      ? SEVERITY_CHIP_ACTIVE_STYLES[sev]
-                      : 'bg-transparent text-[var(--text-muted)] border-[var(--border-subtle)] hover:text-[var(--text-secondary)]'
+                  aria-pressed={!hidden}
+                  onClick={() => toggleSeverity(sev)}
+                  title={hidden ? `Show ${sev} findings` : `Hide ${sev} findings`}
+                  className={`inline-flex items-center gap-1.5 text-xs rounded px-0.5 transition-colors ${
+                    hidden
+                      ? 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+                      : 'text-[var(--text-primary)]'
                   }`}
                 >
+                  <SeverityDot severity={sev} className={hidden ? 'opacity-30' : ''} />
                   <span>{SEVERITY_LABELS[sev]}</span>
-                  <span>{count}</span>
+                  <span className="tabular text-[var(--text-muted)]">{counts[sev]}</span>
                 </button>
               );
             })}
@@ -281,117 +231,132 @@ export function FindingsPanel({
         )}
       </div>
 
-      {/* Findings List */}
+      {/* Toolbar */}
+      {total > 0 && (
+        <div className="h-10 px-4 flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] shrink-0">
+          <span className="text-xs text-[var(--text-muted)] tabular">
+            {filtered.length === total ? plural(total, 'finding') : `${filtered.length} of ${total} shown`}
+          </span>
+          <SegmentedControl
+            label="Group findings by"
+            value={groupBy}
+            onChange={(v) => {
+              setGroupBy(v);
+              setExpandedKey(null);
+            }}
+            options={[
+              { value: 'severity', label: 'Severity' },
+              { value: 'service', label: 'Service' },
+            ]}
+          />
+        </div>
+      )}
+
+      {/* List */}
       <div className="flex-1 overflow-y-auto">
-        {filteredFindings.length === 0 ? (
-          <div className="p-6 text-center text-xs text-[var(--text-secondary)]">
-            {findings.length > 0
-              ? 'All findings are hidden by the severity filters above.'
-              : 'No findings. This tool checks configuration only, not image contents.'}
+        {total === 0 ? (
+          <div className="px-6 py-10 text-center space-y-1.5">
+            <div className="text-[13px] font-medium text-[var(--text-primary)]">No findings</div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              This file passes every enabled rule. Composure checks the Compose configuration,
+              not what is inside the images.
+            </p>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="px-6 py-10 text-center text-xs text-[var(--text-secondary)]">
+            All findings are hidden by the severity filter above.
           </div>
         ) : groupBy === 'severity' ? (
           SEVERITY_ORDER.map((severity) => {
-            const group = groupedBySeverity[severity];
+            const group = bySeverity[severity];
             if (group.length === 0) return null;
-            const ruleGroups = groupFindingsByRule(group);
-            const isCollapsed = collapsedGroups.has(severity);
-
+            const collapsed = collapsedGroups.has(severity);
             return (
               <section key={severity}>
-                <button
-                  type="button"
-                  onClick={() => toggleGroupCollapse(severity)}
-                  className={`w-full px-4 py-2 flex items-center justify-between text-xs font-medium transition-colors ${SEVERITY_GROUP_STYLES[severity]}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span>{SEVERITY_LABELS[severity]}</span>
-                    <span>{group.length}</span>
-                  </div>
-                  <ChevronDownIcon
-                    className={`w-3.5 h-3.5 transition-transform ${
-                      isCollapsed ? '-rotate-90' : ''
-                    }`}
-                  />
-                </button>
-
-                {!isCollapsed && (
-                  <div className="divide-y divide-[var(--border-subtle)]/60">
-                    {ruleGroups.map((ruleGroup) => {
-                      const itemKey = `rule:${severity}:${ruleGroup.key}`;
-                      return (
-                        <CompactRuleGroupRow
-                          key={itemKey}
-                          ruleGroup={ruleGroup}
-                          isExpanded={expandedKey === itemKey}
-                          onToggleExpand={() => {
-                            const first = ruleGroup.items[0];
-                            if (first) onSelectFinding(first);
-                            setExpandedKey((prev) =>
-                              prev === itemKey ? null : itemKey,
-                            );
-                          }}
-                          onSelectFinding={onSelectFinding}
-                          onDisableRule={() => onToggleRule(ruleGroup.ruleId)}
-                          onApplyFix={onApplyFix}
-                          onSuppress={onSuppress}
-                        />
-                      );
-                    })}
-                  </div>
-                )}
+                <GroupHeader
+                  collapsed={collapsed}
+                  onToggle={() => toggleGroup(severity)}
+                  left={
+                    <>
+                      <SeverityDot severity={severity} />
+                      <span style={{ color: SEVERITY_TEXT[severity] }}>{SEVERITY_LABELS[severity]}</span>
+                      <span className="text-[var(--text-muted)] tabular font-normal">{group.length}</span>
+                    </>
+                  }
+                />
+                {!collapsed &&
+                  groupFindingsByRule(group).map((ruleGroup) => {
+                    const itemKey = `rule:${severity}:${ruleGroup.key}`;
+                    return (
+                      <RuleGroupRow
+                        key={itemKey}
+                        group={ruleGroup}
+                        expanded={expandedKey === itemKey}
+                        onToggle={() => {
+                          const first = ruleGroup.items[0];
+                          if (first && expandedKey !== itemKey) onSelectFinding(first);
+                          setExpandedKey((prev) => (prev === itemKey ? null : itemKey));
+                        }}
+                        onSelectFinding={onSelectFinding}
+                        onDisableRule={() => onToggleRule(ruleGroup.ruleId)}
+                        onApplyFix={onApplyFix}
+                        onSuppress={onSuppress}
+                      />
+                    );
+                  })}
               </section>
             );
           })
         ) : (
-          groupedByService.map(([serviceName, group]) => {
+          byService.map(([serviceName, group]) => {
             const groupKey = `svc:${serviceName}`;
-            const isCollapsed = collapsedGroups.has(groupKey);
-
+            const collapsed = collapsedGroups.has(groupKey);
+            const serviceScore = score.serviceScores[serviceName];
             return (
               <section key={groupKey}>
-                <button
-                  type="button"
-                  onClick={() => toggleGroupCollapse(groupKey)}
-                  className="w-full px-4 py-2 bg-[var(--bg-elevated)] hover:bg-[var(--bg-subtle)] flex items-center justify-between text-xs font-medium transition-colors"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-[var(--text-primary)]">
-                      {serviceName}
-                    </span>
-                    <span className="text-[var(--text-muted)]">
-                      {group.length}
-                    </span>
-                  </div>
-                  <ChevronDownIcon
-                    className={`w-3.5 h-3.5 text-[var(--text-secondary)] transition-transform ${
-                      isCollapsed ? '-rotate-90' : ''
-                    }`}
-                  />
-                </button>
-
-                {!isCollapsed && (
-                  <div className="divide-y divide-[var(--border-subtle)]/60">
-                    {group.map((finding, idx) => {
-                      const itemKey = `${finding.ruleId}:${finding.service}:${finding.line}:${idx}`;
-                      return (
-                        <CompactFindingRow
-                          key={itemKey}
-                          finding={finding}
-                          isExpanded={expandedKey === itemKey}
-                          onToggleExpand={() => {
-                            onSelectFinding(finding);
-                            setExpandedKey((prev) =>
-                              prev === itemKey ? null : itemKey,
-                            );
-                          }}
-                          onDisableRule={() => onToggleRule(finding.ruleId)}
-                          onApplyFix={onApplyFix}
-                          onSuppress={onSuppress}
-                        />
-                      );
-                    })}
-                  </div>
-                )}
+                <GroupHeader
+                  collapsed={collapsed}
+                  onToggle={() => toggleGroup(groupKey)}
+                  left={
+                    <>
+                      <span className="text-[var(--text-primary)] truncate">{serviceName}</span>
+                      <span className="text-[var(--text-muted)] tabular font-normal">{group.length}</span>
+                    </>
+                  }
+                  right={
+                    serviceScore !== undefined ? (
+                      <span className="tabular font-medium" style={{ color: scoreColor(serviceScore) }}>
+                        {serviceScore}
+                      </span>
+                    ) : null
+                  }
+                />
+                {!collapsed &&
+                  group.map((finding, idx) => {
+                    const itemKey = `${finding.ruleId}:${finding.service}:${finding.line}:${idx}`;
+                    return (
+                      <RuleGroupRow
+                        key={itemKey}
+                        group={{
+                          key: itemKey,
+                          ruleId: finding.ruleId,
+                          title: finding.title,
+                          severity: finding.severity,
+                          items: [finding],
+                        }}
+                        showService={false}
+                        expanded={expandedKey === itemKey}
+                        onToggle={() => {
+                          if (expandedKey !== itemKey) onSelectFinding(finding);
+                          setExpandedKey((prev) => (prev === itemKey ? null : itemKey));
+                        }}
+                        onSelectFinding={onSelectFinding}
+                        onDisableRule={() => onToggleRule(finding.ruleId)}
+                        onApplyFix={onApplyFix}
+                        onSuppress={onSuppress}
+                      />
+                    );
+                  })}
               </section>
             );
           })
@@ -399,40 +364,35 @@ export function FindingsPanel({
 
         {suppressed.length > 0 && (
           <section className="border-t border-[var(--border-subtle)]">
-            <button
-              type="button"
-              onClick={() => setShowSuppressed((v) => !v)}
-              aria-expanded={showSuppressed}
-              className="w-full px-4 py-2 flex items-center justify-between text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-[var(--bg-elevated)]/50"
-            >
-              <span>Accepted risks {suppressed.length}</span>
-              <ChevronDownIcon
-                className={`w-3.5 h-3.5 transition-transform ${showSuppressed ? '' : '-rotate-90'}`}
-              />
-            </button>
+            <GroupHeader
+              collapsed={!showSuppressed}
+              onToggle={() => setShowSuppressed((v) => !v)}
+              left={
+                <>
+                  <span className="text-[var(--text-secondary)]">Accepted risks</span>
+                  <span className="text-[var(--text-muted)] tabular font-normal">{suppressed.length}</span>
+                </>
+              }
+            />
             {showSuppressed && (
-              <ul className="divide-y divide-[var(--border-subtle)]/60">
+              <ul>
                 {suppressed.map((f, idx) => (
                   <li key={`${f.ruleId}-${f.service}-${f.line}-${idx}`}>
                     <button
                       type="button"
                       onClick={() => onJumpToLine(f.suppression.line)}
-                      className="w-full px-3.5 py-2 text-left flex items-start gap-2 text-xs hover:bg-[var(--bg-elevated)]/60"
+                      className="w-full pl-4 pr-4 py-2.5 text-left flex items-start gap-2.5 text-xs hover:bg-[var(--bg-elevated)] border-b border-[var(--border-subtle)]"
                     >
-                      <span
-                        className={`mt-1 w-2 h-2 rounded-full shrink-0 opacity-50 ${SEVERITY_DOT_COLORS[f.severity]}`}
-                      />
+                      <SeverityDot severity={f.severity} className="mt-1 opacity-40" />
                       <span className="flex-1 min-w-0">
-                        <span className="block text-[var(--text-secondary)] truncate">
-                          {f.ruleId} {f.title} · {f.service}
+                        <span className="block text-[var(--text-secondary)]">
+                          {f.title} <span className="text-[var(--text-muted)]">· {f.service}</span>
                         </span>
-                        {f.suppression.reason && (
-                          <span className="block text-[var(--text-muted)] truncate">
-                            {f.suppression.reason}
-                          </span>
-                        )}
+                        <span className="block text-[var(--text-muted)] truncate">
+                          {f.suppression.reason ?? 'No reason given'}
+                        </span>
                       </span>
-                      <span className="shrink-0 text-[var(--text-muted)]">L{f.suppression.line}</span>
+                      <span className="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">{f.ruleId}</span>
                     </button>
                   </li>
                 ))}
@@ -445,91 +405,107 @@ export function FindingsPanel({
   );
 }
 
-function CompactRuleGroupRow({
-  ruleGroup,
-  isExpanded,
-  onToggleExpand,
+function GroupHeader({
+  collapsed,
+  onToggle,
+  left,
+  right,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+  left: ReactNode;
+  right?: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      className="sticky top-0 z-[1] w-full h-9 px-4 flex items-center justify-between gap-2 text-xs font-medium bg-[var(--bg-panel)] border-b border-[var(--border-subtle)] hover:bg-[var(--bg-elevated)] transition-colors"
+    >
+      <span className="flex items-center gap-2 min-w-0">{left}</span>
+      <span className="flex items-center gap-2 shrink-0">
+        {right}
+        <ChevronDownIcon
+          className={`w-3.5 h-3.5 text-[var(--text-muted)] transition-transform ${collapsed ? '-rotate-90' : ''}`}
+        />
+      </span>
+    </button>
+  );
+}
+
+function RuleGroupRow({
+  group,
+  expanded,
+  showService = true,
+  onToggle,
   onSelectFinding,
   onDisableRule,
   onApplyFix,
   onSuppress,
 }: {
-  ruleGroup: RuleFindingGroup;
-  isExpanded: boolean;
-  onToggleExpand: () => void;
+  group: RuleFindingGroup;
+  expanded: boolean;
+  showService?: boolean;
+  onToggle: () => void;
   onSelectFinding: (finding: Finding) => void;
   onDisableRule: () => void;
   onApplyFix?: (finding: Finding) => void;
   onSuppress?: (finding: Finding) => void;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const activeFinding =
-    ruleGroup.items[selectedIndex] ?? ruleGroup.items[0]!;
-
-  const servicesSummary = useMemo(() => {
-    const names = Array.from(new Set(ruleGroup.items.map((f) => f.service)));
-    if (names.length === 1 && ruleGroup.items.length === 1) {
-      return `${names[0]} L${ruleGroup.items[0]!.line}`;
-    }
-    return names.join(', ');
-  }, [ruleGroup.items]);
+  const active = group.items[selectedIndex] ?? group.items[0]!;
+  const services = Array.from(new Set(group.items.map((f) => f.service)));
+  const meta =
+    group.items.length === 1
+      ? `${showService ? `${group.items[0]!.service} · ` : ''}line ${group.items[0]!.line}`
+      : `${services.join(', ')} · ${group.items.length} places`;
 
   return (
-    <div className="text-xs">
+    <div className="border-b border-[var(--border-subtle)]">
       <button
         type="button"
-        aria-expanded={isExpanded}
-        onClick={onToggleExpand}
-        className={`w-full px-3.5 py-2.5 text-left flex items-center gap-2 hover:bg-[var(--bg-elevated)]/60 transition-colors ${
-          isExpanded ? 'bg-[var(--bg-elevated)]/80' : ''
+        aria-expanded={expanded}
+        onClick={onToggle}
+        className={`w-full pl-4 pr-4 py-2.5 text-left flex items-start gap-2.5 transition-colors ${
+          expanded ? 'bg-[var(--bg-elevated)]' : 'hover:bg-[var(--bg-elevated)]'
         }`}
       >
-        <span
-          className={`w-2 h-2 rounded-full shrink-0 ${
-            SEVERITY_DOT_COLORS[ruleGroup.severity]
-          }`}
-          title={ruleGroup.severity}
-        />
-        <span className="text-[var(--text-secondary)] shrink-0">
-          {ruleGroup.ruleId}
-        </span>
-        <span className="text-[var(--text-primary)] font-medium whitespace-nowrap shrink-0">
-          {ruleGroup.title}
-        </span>
-        <span className="text-[var(--text-secondary)] truncate min-w-0 flex-1 text-right">
-          {servicesSummary}
+        <SeverityDot severity={group.severity} className="mt-[5px]" />
+        <span className="flex-1 min-w-0">
+          <span className="flex items-baseline justify-between gap-2">
+            <span className="text-[13px] font-medium text-[var(--text-primary)] leading-snug">{group.title}</span>
+            <span className="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">{group.ruleId}</span>
+          </span>
+          <span className="block mt-0.5 text-xs text-[var(--text-muted)] truncate">{meta}</span>
         </span>
       </button>
 
-      {isExpanded && (
-        <div className="px-4 pb-3.5 pt-1.5 pl-8 space-y-2.5 bg-[var(--bg-elevated)]/30">
-          {ruleGroup.items.length > 1 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {ruleGroup.items.map((item, idx) => {
-                const isSelected = idx === selectedIndex;
-                return (
-                  <button
-                    key={`${item.service}-${item.line}-${idx}`}
-                    type="button"
-                    onClick={() => {
-                      setSelectedIndex(idx);
-                      onSelectFinding(item);
-                    }}
-                    className={`px-2 py-0.5 rounded text-xs border transition-colors ${
-                      isSelected
-                        ? 'bg-[var(--accent-bg)] text-[var(--accent)] border-transparent font-medium'
-                        : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
-                    }`}
-                  >
-                    {item.service} L{item.line}
-                  </button>
-                );
-              })}
+      {expanded && (
+        <div className="pl-[34px] pr-4 pb-4 pt-1 space-y-3 bg-[var(--bg-elevated)]">
+          {group.items.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              {group.items.map((item, idx) => (
+                <button
+                  key={`${item.service}-${item.line}-${idx}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedIndex(idx);
+                    onSelectFinding(item);
+                  }}
+                  className={`h-6 px-2 rounded-md text-xs border transition-colors ${
+                    idx === selectedIndex
+                      ? 'bg-[var(--bg-panel)] border-[var(--border-hover)] text-[var(--text-primary)] font-medium'
+                      : 'border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)]'
+                  }`}
+                >
+                  {item.service} <span className="text-[var(--text-muted)] tabular">L{item.line}</span>
+                </button>
+              ))}
             </div>
           )}
-
-          <FindingExpandedContent
-            finding={activeFinding}
+          <FindingDetail
+            finding={active}
             onDisableRule={onDisableRule}
             onApplyFix={onApplyFix}
             onSuppress={onSuppress}
@@ -540,63 +516,7 @@ function CompactRuleGroupRow({
   );
 }
 
-function CompactFindingRow({
-  finding,
-  isExpanded,
-  onToggleExpand,
-  onDisableRule,
-  onApplyFix,
-  onSuppress,
-}: {
-  finding: Finding;
-  isExpanded: boolean;
-  onToggleExpand: () => void;
-  onDisableRule: () => void;
-  onApplyFix?: (finding: Finding) => void;
-  onSuppress?: (finding: Finding) => void;
-}) {
-  return (
-    <div className="text-xs">
-      <button
-        type="button"
-        aria-expanded={isExpanded}
-        onClick={onToggleExpand}
-        className={`w-full px-3.5 py-2.5 text-left flex items-center gap-2 hover:bg-[var(--bg-elevated)]/60 transition-colors ${
-          isExpanded ? 'bg-[var(--bg-elevated)]/80' : ''
-        }`}
-      >
-        <span
-          className={`w-2 h-2 rounded-full shrink-0 ${
-            SEVERITY_DOT_COLORS[finding.severity]
-          }`}
-          title={finding.severity}
-        />
-        <span className="text-[var(--text-secondary)] shrink-0">
-          {finding.ruleId}
-        </span>
-        <span className="text-[var(--text-primary)] font-medium whitespace-nowrap flex-1">
-          {finding.title}
-        </span>
-        <span className="text-[var(--text-muted)] shrink-0">
-          L{finding.line}
-        </span>
-      </button>
-
-      {isExpanded && (
-        <div className="px-4 pb-3.5 pt-1.5 pl-8 space-y-2.5 bg-[var(--bg-elevated)]/30">
-          <FindingExpandedContent
-            finding={finding}
-            onDisableRule={onDisableRule}
-            onApplyFix={onApplyFix}
-            onSuppress={onSuppress}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function FindingExpandedContent({
+function FindingDetail({
   finding,
   onDisableRule,
   onApplyFix,
@@ -610,8 +530,7 @@ function FindingExpandedContent({
   const [copied, setCopied] = useState(false);
   const { text: fixText, yamlCode } = parseFixContent(finding.fix);
 
-  const handleCopyYaml = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const copyYaml = () => {
     if (!yamlCode) return;
     navigator.clipboard
       ?.writeText(yamlCode)
@@ -622,92 +541,83 @@ function FindingExpandedContent({
       .catch(() => undefined);
   };
 
-  const explanation = formatFindingExplanation(finding);
-
   return (
     <>
-      <p className="text-[var(--text-secondary)] text-xs leading-relaxed">
-        {renderInlineCode(explanation)}
+      <p className="text-[13px] text-[var(--text-primary)] leading-relaxed">
+        {renderInlineCode(finding.message)}{' '}
+        <span className="text-[var(--text-secondary)]">{renderInlineCode(finding.description)}</span>
       </p>
 
-      <div className="space-y-1.5">
-        <div className="flex items-start justify-between gap-2">
-          {fixText && (
-            <span className="text-xs text-[var(--text-primary)] font-medium leading-relaxed">
-              {renderInlineCode(fixText)}
-            </span>
-          )}
-          {yamlCode && (
+      <div className="space-y-2">
+        {fixText && (
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{renderInlineCode(fixText)}</p>
+        )}
+        {yamlCode && (
+          <div className="relative">
+            <pre className="p-3 pr-10 rounded-md bg-[var(--bg-panel)] border border-[var(--border-subtle)] font-mono text-xs leading-relaxed text-[var(--text-primary)] overflow-x-auto">
+              <code>{yamlCode}</code>
+            </pre>
             <button
               type="button"
-              onClick={handleCopyYaml}
-              className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline shrink-0"
+              onClick={copyYaml}
+              aria-label="Copy YAML example"
+              title={copied ? 'Copied' : 'Copy YAML example'}
+              className="absolute top-2 right-2 h-6 w-6 inline-flex items-center justify-center rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]"
             >
-              {copied ? 'Copied' : 'Copy YAML'}
+              {copied ? <CheckIcon className="w-3.5 h-3.5" /> : <CopyIcon className="w-3.5 h-3.5" />}
             </button>
-          )}
-        </div>
-
-        {yamlCode && (
-          <pre className="p-2.5 rounded bg-[var(--bg-app)] border border-[var(--border-subtle)] font-mono text-xs text-[var(--text-primary)] overflow-x-auto">
-            <code>{yamlCode}</code>
-          </pre>
+          </div>
         )}
       </div>
 
       {(finding.autofix || onSuppress) && (
-        <div className="flex flex-wrap items-center gap-2">
-          {finding.autofix && onApplyFix && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onApplyFix(finding);
-              }}
-              className="text-xs px-2 py-1 rounded bg-[var(--accent-bg)] text-[var(--accent)] font-medium hover:opacity-90 transition-opacity"
-              title="Preview the exact change, then apply it to the editor"
-            >
-              Fix: {finding.autofix.label}
-            </button>
-          )}
-          {onSuppress && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSuppress(finding);
-              }}
-              className="text-xs px-2 py-1 rounded border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors"
-              title={`Insert "# composure-ignore ${finding.ruleId}" above line ${finding.line}`}
-            >
-              Accept risk
-            </button>
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            {finding.autofix && onApplyFix && (
+              <Button variant="secondary" onClick={() => onApplyFix(finding)} title="Preview the change, then apply it">
+                <WrenchIcon className="w-3.5 h-3.5" />
+                {finding.autofix.label}
+              </Button>
+            )}
+            {onSuppress && (
+              <Button
+                variant="ghost"
+                onClick={() => onSuppress(finding)}
+                title={`Insert "# composure-ignore ${finding.ruleId}" above line ${finding.line}`}
+              >
+                Accept risk
+              </Button>
+            )}
+          </div>
+          {finding.autofix?.caution && (
+            <p className="text-xs text-[var(--text-muted)] leading-relaxed">{finding.autofix.caution}</p>
           )}
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-2 pt-0.5">
-        <div className="flex flex-wrap gap-x-3 gap-y-1 min-w-0">
+      <div className="flex items-end justify-between gap-3 pt-1">
+        <ul className="space-y-1 min-w-0">
           {finding.references.map((ref, idx) => (
-            <a
-              key={idx}
-              href={ref.url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline truncate max-w-full"
-            >
-              {ref.title}
-            </a>
+            <li key={idx}>
+              <a
+                href={ref.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-start gap-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline underline-offset-2 decoration-[var(--border-strong)] hover:decoration-[var(--text-secondary)]"
+              >
+                <span>{ref.title}</span>
+                <ExternalLinkIcon className="w-3 h-3 mt-0.5 shrink-0" />
+              </a>
+            </li>
           ))}
-        </div>
-
+        </ul>
         <button
           type="button"
           onClick={onDisableRule}
-          title={`Turn off ${finding.ruleId} for every file (Settings to undo)`}
-          className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] shrink-0"
+          title={`Turn off ${finding.ruleId} for every file (undo in Settings)`}
+          className="shrink-0 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]"
         >
-          Mute {finding.ruleId}
+          Mute rule
         </button>
       </div>
     </>

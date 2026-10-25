@@ -63,84 +63,85 @@ interface SvgThemeColors {
   labelBorder: string;
 }
 
+// Mirrors the design tokens in src/index.css so exports match the app
 const THEMES: Record<'dark' | 'light', SvgThemeColors> = {
   dark: {
-    bg: '#0f1117',
-    gridDot: '#222734',
-    headerBorder: '#232936',
-    textPrimary: '#f8fafc',
-    textSecondary: '#94a3b8',
-    textMuted: '#64748b',
-    accent: '#2dd4bf',
-    badgeBg: '#1e2430',
+    bg: '#121211',
+    gridDot: '#2a2a28',
+    headerBorder: '#272725',
+    textPrimary: '#ededeb',
+    textSecondary: '#a8a7a2',
+    textMuted: '#8d8c87',
+    accent: '#ededeb',
+    badgeBg: '#20201e',
 
-    nodeServiceBg: '#161b24',
-    nodeServiceBorder: '#2e3848',
+    nodeServiceBg: '#1b1b1a',
+    nodeServiceBorder: '#3a3a37',
 
-    sevCriticalBorder: '#ef4444',
-    sevHighBorder: '#f97316',
-    sevMediumBorder: '#f59e0b',
-    sevLowBorder: '#3b82f6',
-    sevInfoBorder: '#64748b',
+    sevCriticalBorder: '#f04438',
+    sevHighBorder: '#fb6c1c',
+    sevMediumBorder: '#e8a90b',
+    sevLowBorder: '#3a3a37',
+    sevInfoBorder: '#3a3a37',
 
-    nodePortBg: '#221524',
-    nodePortBorder: '#ec4899',
-    nodePortFg: '#f472b6',
+    nodePortBg: '#2a1823',
+    nodePortBorder: '#e8689f',
+    nodePortFg: '#f191bb',
 
-    nodeNetworkBg: '#1c182e',
-    nodeNetworkBorder: '#8b5cf6',
-    nodeNetworkFg: '#a78bfa',
+    nodeNetworkBg: '#1f1c2c',
+    nodeNetworkBorder: '#9b86f7',
+    nodeNetworkFg: '#b9a9fa',
 
-    nodeVolumeBg: '#12241d',
-    nodeVolumeBorder: '#10b981',
-    nodeVolumeFg: '#34d399',
+    nodeVolumeBg: '#15241c',
+    nodeVolumeBorder: '#3cc384',
+    nodeVolumeFg: '#6ed7a3',
 
-    nodeBindBg: '#241e16',
-    nodeBindBorder: '#d97706',
-    nodeBindFg: '#fbbf24',
+    nodeBindBg: '#26201a',
+    nodeBindBorder: '#c9965d',
+    nodeBindFg: '#ddb383',
 
-    edgeDepends: '#64748b',
-    labelBg: '#161b24',
-    labelBorder: '#2e3848',
+    edgeDepends: '#7d7c77',
+    labelBg: '#181817',
+    labelBorder: '#383835',
   },
   light: {
-    bg: '#f8fafc',
-    gridDot: '#cbd5e1',
-    headerBorder: '#e2e8f0',
-    textPrimary: '#0f172a',
-    textSecondary: '#475569',
-    textMuted: '#64748b',
-    accent: '#0d9488',
-    badgeBg: '#f1f5f9',
+    bg: '#f1f1ef',
+    gridDot: '#d6d5d0',
+    headerBorder: '#e5e4e0',
+    textPrimary: '#18181a',
+    textSecondary: '#4f4e49',
+    textMuted: '#6b6a64',
+    accent: '#18181a',
+    badgeBg: '#f5f5f3',
 
     nodeServiceBg: '#ffffff',
-    nodeServiceBorder: '#cbd5e1',
+    nodeServiceBorder: '#cfcec9',
 
-    sevCriticalBorder: '#dc2626',
-    sevHighBorder: '#ea580c',
-    sevMediumBorder: '#d97706',
-    sevLowBorder: '#2563eb',
-    sevInfoBorder: '#64748b',
+    sevCriticalBorder: '#d92d20',
+    sevHighBorder: '#ec6a1e',
+    sevMediumBorder: '#b98000',
+    sevLowBorder: '#cfcec9',
+    sevInfoBorder: '#cfcec9',
 
-    nodePortBg: '#fdf2f8',
-    nodePortBorder: '#db2777',
-    nodePortFg: '#be185d',
+    nodePortBg: '#fdeff5',
+    nodePortBorder: '#d4407f',
+    nodePortFg: '#a51f5a',
 
-    nodeNetworkBg: '#f5f3ff',
-    nodeNetworkBorder: '#7c3aed',
-    nodeNetworkFg: '#6d28d9',
+    nodeNetworkBg: '#f4f1ff',
+    nodeNetworkBorder: '#7a5af8',
+    nodeNetworkFg: '#5a34d6',
 
-    nodeVolumeBg: '#ecfdf5',
-    nodeVolumeBorder: '#059669',
-    nodeVolumeFg: '#047857',
+    nodeVolumeBg: '#eaf8f0',
+    nodeVolumeBorder: '#1f9d5c',
+    nodeVolumeFg: '#0d6b3c',
 
-    nodeBindBg: '#fffbeb',
-    nodeBindBorder: '#b45309',
-    nodeBindFg: '#92400e',
+    nodeBindBg: '#faf2e8',
+    nodeBindBorder: '#b0762f',
+    nodeBindFg: '#84531a',
 
-    edgeDepends: '#64748b',
+    edgeDepends: '#8a8983',
     labelBg: '#ffffff',
-    labelBorder: '#cbd5e1',
+    labelBorder: '#d2d1cc',
   },
 };
 
@@ -304,15 +305,15 @@ export async function renderGraphToSvgString(
 
   parts.push(`  <!-- Header Branding -->
   <g transform="translate(36, 26)">
-    <!-- Container Icon -->
-    <rect x="0" y="0" width="22" height="22" rx="5" fill="${colors.nodeServiceBg}" stroke="${colors.nodeServiceBorder}" stroke-width="1" />
-    <rect x="4" y="4" width="6" height="6" rx="1" fill="${colors.accent}" />
-    <rect x="12" y="4" width="6" height="6" rx="1" fill="${colors.accent}" fill-opacity="0.75" />
-    <rect x="4" y="12" width="6" height="6" rx="1" fill="${colors.accent}" fill-opacity="0.75" />
-    <rect x="12" y="12" width="6" height="6" rx="1" fill="${colors.accent}" fill-opacity="0.35" />
+    <!-- Logo mark -->
+    <g transform="translate(0, 1)">
+      <rect x="2.5" y="2.5" width="7" height="7" rx="2" fill="${colors.textPrimary}" />
+      <rect x="10.5" y="10.5" width="7" height="7" rx="2" fill="none" stroke="${colors.textPrimary}" stroke-width="1.6" />
+      <path d="M9.5 6h2.5a2 2 0 0 1 2 2v2.5" fill="none" stroke="${colors.textPrimary}" stroke-width="1.6" stroke-linecap="round" />
+    </g>
 
-    <text x="32" y="15" fill="${colors.textPrimary}" font-size="14" font-weight="700" letter-spacing="-0.3">Composure</text>
-    <text x="116" y="15" fill="${colors.textMuted}" font-size="12" font-weight="600">COMPOSURE ARCHITECTURE DIAGRAM</text>
+    <text x="28" y="15" fill="${colors.textPrimary}" font-size="14" font-weight="600" letter-spacing="-0.2">Composure</text>
+    <text x="112" y="15" fill="${colors.textMuted}" font-size="12">Architecture diagram</text>
     <text x="${totalWidth - 72}" y="15" text-anchor="end" fill="${colors.textSecondary}" font-size="11" class="mono">${serviceCount} services · ${portCount} ports · ${netCount} nets · ${volCount} vols</text>
   </g>
   <line x1="36" y1="56" x2="${totalWidth - 36}" y2="56" stroke="${colors.headerBorder}" stroke-width="1" />`);
@@ -460,7 +461,7 @@ export async function renderGraphToSvgString(
 
   // Footer Watermark
   parts.push(`  <!-- Footer -->
-  <text x="${totalWidth - 36}" y="${totalHeight - 16}" text-anchor="end" fill="${colors.textMuted}" font-size="10">Generated with Composure · 100% Client-Side</text>`);
+  <text x="${totalWidth - 36}" y="${totalHeight - 16}" text-anchor="end" fill="${colors.textMuted}" font-size="10">Generated with Composure</text>`);
 
   parts.push('</svg>');
   return { svg: parts.join('\n'), width: totalWidth, height: totalHeight };

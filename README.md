@@ -5,7 +5,7 @@
 Paste or drop a Compose file to immediately inspect:
 1. **Interactive Topology Diagram**: services, networks (including the implicit `default` network), named volumes, host bind mounts (`ro`/`rw`), published ports (public vs. loopback), `depends_on` and `network_mode: service:` relationships.
 2. **Compose Problems**: typos in keys (with "did you mean"), undefined networks/volumes/secrets/services, dependency cycles, host port conflicts, invalid ports, profile and healthcheck dependency traps, and more. These are things `docker compose up` would reject or silently get wrong.
-3. **Security Hardening Review**: 21 rules (`CMP001`–`CMP021`) mapped to the CIS Docker Benchmark v1.6.0, with exact YAML line numbers, explanations, safe one-click fixes with a diff preview, and an overall score and grade (`A`–`F`).
+3. **Security Hardening Review**: 22 rules (`CMP001`–`CMP022`) mapped to the CIS Docker Benchmark v1.6.0, with exact YAML line numbers, explanations, safe fixes with a diff preview (one at a time or **Fix all**), and a score with a breakdown per area and per service.
 
 ---
 
@@ -20,9 +20,11 @@ Paste or drop a Compose file to immediately inspect:
 
 ## Screenshots
 
-| Interactive Topology & Live YAML Editor (Dark Mode) | Security Hardening Findings & Node Inspector (Light Mode) |
+| Findings, diagram and editor (dark) | Score by area, services and exposure (light) |
 | :---: | :---: |
-| ![Composure Dark Mode](docs/screenshots/composure-dark.png) | ![Composure Light Mode](docs/screenshots/composure-light.png) |
+| ![Composure in dark mode with a finding and its fix](docs/screenshots/composure-dark.png) | ![Composure in light mode showing the project overview](docs/screenshots/composure-light.png) |
+
+![Fix all: choose fixes per rule and review the combined diff](docs/screenshots/composure-fix-all.png)
 
 ---
 
@@ -40,14 +42,17 @@ Paste or drop a Compose file to immediately inspect:
 - **Safe Fixes**
   - Fixes are precise text edits, never a rewrite of the file: comments, quoting, and ordering stay as you wrote them
   - Every fix shows a diff preview first and can be undone with `Ctrl/Cmd+Z`
+  - **Fix all** lists every automatic fix per rule with checkboxes and a combined diff, so you can apply twenty fixes in one go and still see exactly what changes
+  - Fixes that can change behavior say so (for example, `cap_drop: ALL` may need a capability added back)
   - Fixes are only offered where they are safe (for example, a value inherited from a YAML anchor is overridden for that one service instead of editing the shared anchor)
+- **Rating**: an overall score and grade, plus a score per area (privileges, host isolation, network exposure, secrets, image pinning, reliability), per service, and a summary of what the stack exposes (public ports, socket mounts, writable host mounts, ...)
 - **Accepting Risks**: mute a rule everywhere, or accept a single finding with a `# composure-ignore` comment (see below). Accepted risks stay visible but no longer count toward the score.
-- **Export & Sharing**: diagram as **SVG** or high-DPI **PNG**, report as **Markdown** (including Compose problems, per-service scores, and accepted risks), and compressed share links.
-- **CLI & CI**: text, JSON, SARIF, and Markdown output, exit codes for pipelines, and a ready-made GitHub Action.
+- **Export & Sharing**: download or copy the (fixed) YAML, diagram as **SVG** or high-DPI **PNG**, report as **Markdown** (including Compose problems, scores per area and service, and accepted risks), and compressed share links.
+- **CLI & CI**: text, JSON, SARIF, and Markdown output, `--fix` to apply fixes in place, exit codes for pipelines, and a ready-made GitHub Action.
 
 ---
 
-## Hardening Rules (`CMP001` to `CMP021`)
+## Hardening Rules (`CMP001` to `CMP022`)
 
 CIS numbers refer to the **CIS Docker Benchmark v1.6.0** (as implemented by `docker-bench-security`).
 
@@ -56,7 +61,7 @@ CIS numbers refer to the **CIS Docker Benchmark v1.6.0** (as implemented by `doc
 | **`CMP001`** | `critical` | Privileged mode enabled | `privileged: true` (CIS 5.5). |
 | **`CMP002`** | `critical` | Docker socket mounted | Mounts of `docker.sock`, and other runtime sockets (`containerd.sock`, `podman.sock`, `crio.sock`), including `:ro` mounts, which do not block API calls (CIS 5.32). |
 | **`CMP003`** | `medium` / `info` | Unpinned image tag | `:latest`, a missing tag, or a `${TAG:-latest}` fallback (`medium`); a version tag without an `@sha256:` digest (`info`). Fully interpolated images (`${IMAGE}`) are skipped. |
-| **`CMP004`** | `critical` / `high` / `medium` | Port bound to 0.0.0.0 | Ports published on all interfaces, which Docker's iptables rules expose past `ufw` (CIS 5.14). `high` for datastore/admin ports (PostgreSQL, MySQL, Redis, MongoDB, Elasticsearch, etcd, Kafka, ...), `critical` for the unencrypted Docker API (`2375`). Skipped for `network_mode: host`, where `ports` is ignored. |
+| **`CMP004`** | `critical` / `high` / `medium` | Port bound to 0.0.0.0 | Ports published on all interfaces, which Docker's iptables rules expose past `ufw` (CIS 5.14). `high` for datastore and remote-access ports (PostgreSQL, MySQL, Redis, MongoDB, Elasticsearch, etcd, Kafka, SSH, RDP, VNC, ...), `critical` for the unencrypted Docker API (`2375`). Skipped for `network_mode: host`, where `ports` is ignored. |
 | **`CMP005`** | `high` | Host namespace shared | `network_mode`, `pid`, `ipc`, `uts`, `userns_mode`, or `cgroup` set to `host` (CIS 5.10, 5.16, 5.17, 5.21, 5.31). |
 | **`CMP006`** | `critical` / `high` | Dangerous capability | `cap_add: ALL` (`critical`), and `SYS_ADMIN`, `SYS_MODULE`, `SYS_RAWIO`, `SYS_PTRACE`, `NET_ADMIN`, `DAC_READ_SEARCH`, `BPF`, `MAC_ADMIN`, and others (`high`) (CIS 5.4). |
 | **`CMP007`** | `low` | Capabilities not dropped | No `cap_drop: [ALL]` (CIS 5.4). Skipped for privileged services, where `cap_drop` has no effect. |
@@ -74,6 +79,7 @@ CIS numbers refer to the **CIS Docker Benchmark v1.6.0** (as implemented by `doc
 | **`CMP019`** | `critical` / `high` | Database auth disabled | `POSTGRES_HOST_AUTH_METHOD=trust`, `MYSQL_ALLOW_EMPTY_PASSWORD`, `ALLOW_EMPTY_PASSWORD`, disabled Elasticsearch/OpenSearch security. `critical` when the service is also published on all interfaces. |
 | **`CMP020`** | `info` | No PIDs limit | No `pids_limit` / `deploy.resources.limits.pids`, so a fork bomb can exhaust the host (CIS 5.29). |
 | **`CMP021`** | `medium` | Shared mount propagation | Bind mounts with `shared` or `rshared` propagation (CIS 5.20). |
+| **`CMP022`** | `info` | No restart policy | No `restart` (or `deploy.restart_policy`), so the service stays down after a crash or reboot (CIS 5.15). |
 
 ### Compose Problems
 
@@ -102,6 +108,8 @@ Besides security findings, the **Problems** tab lists correctness issues:
 Each service starts at 100 and loses points per open finding: **critical 30, high 15, medium 6, low 2, info 0**. The project score is the average of the weakest service and the mean of all services, so one bad service drags the grade down, but adding more well-configured services does not. While a critical finding is open the score is capped at **59 (D)**, and a high finding caps it at **74 (C)**.
 
 Grades: `A` ≥ 90, `B` ≥ 75, `C` ≥ 60, `D` ≥ 40, `F` < 40. Accepted risks (below) do not count.
+
+**Score by area** answers "where is this stack weak?". Every rule belongs to one area (privileges, host isolation, network exposure, secrets & auth, image pinning, reliability). An area's score is the share of services without issues in that area, weighted by each service's worst issue there (critical 1, high 0.7, medium 0.4, low 0.15), so "three of four services run privileged" reads as a low score even if the overall grade is carried by other areas.
 
 ---
 
@@ -148,7 +156,7 @@ docker-compose.yml  Grade C (72/100)  3 services
   15      high     [db] Database auth disabled: PostgreSQL accepts every connection without a password (POSTGRES_HOST_AUTH_METHOD: trust). CMP019
   ...
 
-✖ 31 findings (0 critical, 2 high, 5 medium, 12 low, 12 info), 1 Compose error
+✖ 34 findings (0 critical, 2 high, 5 medium, 12 low, 15 info), 1 Compose error
 ```
 
 | Option | Description |
@@ -159,6 +167,7 @@ docker-compose.yml  Grade C (72/100)  3 services
 | `--min-severity <level>` | hide findings below this level in text output (default `low`) |
 | `--disable <ids>` | skip rules, e.g. `CMP007,CMP016` |
 | `--no-fail-on-problems` | do not exit 1 on Compose errors |
+| `--fix` | apply all safe automatic fixes and write the files back (review with `git diff`) |
 | `--list-rules` | print all rules |
 
 Without file arguments it looks for `compose.yaml` / `docker-compose.yml` in the current directory; `-` reads from stdin. Exit codes: `0` clean, `1` threshold reached or Compose errors, `2` usage or read error.
@@ -214,13 +223,13 @@ The pure TypeScript core is separate from the React UI, and is shared by the web
 - `src/core/` (no React or DOM imports)
   - `parser.ts`, `normalizer.ts`: YAML → normalized `ComposeModel` with line numbers
   - `astDiagnostics.ts`, `composeSchema.ts`, `validator.ts`: Compose problems
-  - `rules/`: one file per hardening rule (`CMP001`–`CMP021`), plus `shared.ts` helpers
-  - `ruleEngine.ts`: rule execution and scoring
+  - `rules/`: one file per hardening rule (`CMP001`–`CMP022`), plus `shared.ts` helpers
+  - `categories.ts`, `ruleEngine.ts`: rule areas, rule execution, and scoring
   - `suppressions.ts`: `# composure-ignore` comments
   - `analyze.ts`: one-call parse + validate + rules + suppressions + score
-  - `autofix.ts`: safe, minimal text edits for fixes; `textDiff.ts` for previews
+  - `autofix.ts`: safe, minimal text edits for single fixes and Fix all; `textDiff.ts` for previews
   - `graph.ts`, `report.ts`, `sarif.ts`, `share.ts`
-- `src/ui/`: React components, CodeMirror 6 integration (`Editor.tsx`, `composeCompletions.ts`), React Flow + ELK diagram (`diagram/`)
+- `src/ui/`: React components, shared controls (`primitives.tsx`), CodeMirror 6 integration (`Editor.tsx`, `composeCompletions.ts`), React Flow + ELK diagram (`diagram/`). Colors live as design tokens in `src/index.css`.
 - `src/cli/composure.ts`: the command-line interface (built to `dist-cli/composure.mjs`)
 - `action.yml`: the GitHub Action
 - `tests/`: Vitest suites and YAML fixtures

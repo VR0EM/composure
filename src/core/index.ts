@@ -13,3 +13,4 @@ export * from './report';
 export * from './autofix';
 export * from './sarif';
 export * from './textDiff';
+export * from './categories';

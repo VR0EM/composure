@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -27,6 +27,7 @@ interface ComposeDiagramProps {
   isStale: boolean;
   theme: 'dark' | 'light';
   layoutTrigger?: number;
+  emptyContent?: ReactNode;
 }
 
 const FIT_PADDING = 0.08;
@@ -39,6 +40,7 @@ function DiagramCanvas({
   onSelectNode,
   isStale,
   layoutTrigger = 0,
+  emptyContent,
 }: ComposeDiagramProps) {
   const [layouts, setLayouts] = useState<Record<LayoutDirection, LayoutResult> | null>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({
@@ -168,26 +170,20 @@ function DiagramCanvas({
 
   if (graph.nodes.length === 0) {
     return (
-      <div className="w-full h-full flex items-center justify-center p-8 bg-[var(--bg-app)]">
-        <div className="max-w-md text-center space-y-2">
-          <h2 className="text-sm font-semibold text-[var(--text-primary)]">
-            Paste or drop a docker-compose.yml file
-          </h2>
-          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-            Composure is 100% client-side. There is no backend, no external API
-            calls, no analytics, and no telemetry. Your Compose file never
-            leaves your browser.
-          </p>
-        </div>
+      <div className="w-full h-full flex items-center justify-center p-8 bg-[var(--bg-canvas)]">
+        {emptyContent ?? (
+          <p className="text-[13px] text-[var(--text-secondary)]">Paste or drop a docker-compose.yml file.</p>
+        )}
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="relative w-full h-full bg-[var(--bg-app)]">
+    <div ref={containerRef} className="relative w-full h-full bg-[var(--bg-canvas)]">
       {isStale && (
-        <div className="absolute top-3 left-3 z-10 px-3 py-1.5 rounded-md bg-[var(--sev-medium-group-bg)] border border-[var(--sev-medium-border)] text-[var(--sev-medium-fg)] text-xs">
-          YAML has errors: showing last valid diagram
+        <div className="absolute top-3 left-3 z-10 px-3 py-1.5 rounded-md bg-[var(--bg-panel)] border border-[var(--border-strong)] text-[var(--text-secondary)] text-xs shadow-[var(--node-shadow)] inline-flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--sev-medium-border)]" />
+          The YAML has errors. Showing the last valid diagram.
         </div>
       )}
 
@@ -227,95 +223,88 @@ function DiagramCanvas({
         />
       </ReactFlow>
 
-      {/* Flat Canvas Toolbar & Legend Popover */}
+      {/* Toolbar and legend */}
       <div className="absolute bottom-3 right-3 z-10 flex flex-col items-end gap-2">
         {showLegend && (
-          <div className="p-3 rounded-lg bg-[var(--bg-panel)] border border-[var(--border-strong)] text-xs text-[var(--text-secondary)] shadow-md space-y-2 min-w-[215px]">
-            <div className="font-medium text-[var(--text-primary)] pb-1 border-b border-[var(--border-subtle)]">
-              Legend
+          <div className="w-60 p-3 rounded-lg bg-[var(--bg-panel)] border border-[var(--border-strong)] text-xs text-[var(--text-secondary)] shadow-[0_8px_24px_rgb(0_0_0/0.14)] space-y-3">
+            <div className="space-y-1.5">
+              <LegendSwatch label="Service, border shows the worst finding" bg="var(--node-service-bg)" border="var(--sev-high-border)" />
+              <LegendSwatch label="Published port" bg="var(--node-port-bg)" border="var(--node-port-border)" />
+              <LegendSwatch label="Network" bg="var(--node-network-bg)" border="var(--node-network-border)" />
+              <LegendSwatch label="Named volume" bg="var(--node-volume-bg)" border="var(--node-volume-border)" />
+              <LegendSwatch label="Bind mount (host path)" bg="var(--node-bind-bg)" border="var(--node-bind-border)" />
             </div>
-            <div className="space-y-1">
-              <div className="text-[var(--text-muted)]">Node types</div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Published port (public / loopback)</span>
-                <span className="w-5 h-2.5 rounded-sm bg-[var(--node-port-bg)] border border-[var(--node-port-border)] inline-block" />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Network</span>
-                <span className="w-5 h-2.5 rounded-sm bg-[var(--node-network-bg)] border border-[var(--node-network-border)] inline-block" />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Named volume</span>
-                <span className="w-5 h-2.5 rounded-sm bg-[var(--node-volume-bg)] border border-[var(--node-volume-border)] inline-block" />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Bind mount</span>
-                <span className="w-5 h-2.5 rounded-sm bg-[var(--node-bind-bg)] border border-[var(--node-bind-border)] inline-block" />
-              </div>
-            </div>
-            <div className="space-y-1 pt-1 border-t border-[var(--border-subtle)]">
-              <div className="text-[var(--text-muted)]">Mounts &amp; links</div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Read-write (rw)</span>
-                <span className="w-6 border-t-2 border-[var(--node-volume-border)] inline-block" />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>Read-only (ro)</span>
-                <span className="w-6 border-t border-[var(--node-bind-border)] inline-block" />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>depends_on</span>
-                <span className="w-6 border-t border-dashed border-[var(--edge-depends)] inline-block" />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span>network_mode: service</span>
-                <span className="w-6 border-t border-dashed border-[var(--node-network-border)] inline-block" />
-              </div>
+            <div className="space-y-1.5 pt-2.5 border-t border-[var(--border-subtle)]">
+              <LegendLine label="Read-write mount" style={{ borderTopWidth: 2, borderColor: 'var(--node-volume-border)' }} />
+              <LegendLine label="Read-only mount" style={{ borderTopWidth: 1, borderColor: 'var(--node-volume-border)' }} />
+              <LegendLine label="depends_on" style={{ borderTopWidth: 1, borderStyle: 'dashed', borderColor: 'var(--edge-depends)' }} />
+              <LegendLine label="network_mode: service" style={{ borderTopWidth: 1, borderStyle: 'dashed', borderColor: 'var(--node-network-border)' }} />
             </div>
           </div>
         )}
 
-        <div className="inline-flex items-center rounded-lg overflow-hidden bg-[var(--bg-panel)] border border-[var(--border-strong)] shadow-sm divide-x divide-[var(--border-subtle)] text-xs">
-          <button
-            type="button"
-            onClick={() => zoomOut({ duration: 120 })}
-            title="Zoom out"
-            aria-label="Zoom out"
-            className="h-7 px-2.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
-          >
-            -
-          </button>
-          <button
-            type="button"
-            onClick={() => zoomIn({ duration: 120 })}
-            title="Zoom in"
-            aria-label="Zoom in"
-            className="h-7 px-2.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
-          >
+        <div className="inline-flex items-center rounded-lg overflow-hidden bg-[var(--bg-panel)] border border-[var(--border-strong)] shadow-[var(--node-shadow)] divide-x divide-[var(--border-subtle)] text-xs">
+          <ToolbarButton label="Zoom out" onClick={() => zoomOut({ duration: 120 })}>
+            −
+          </ToolbarButton>
+          <ToolbarButton label="Zoom in" onClick={() => zoomIn({ duration: 120 })}>
             +
-          </button>
-          <button
-            type="button"
-            onClick={() => fitDiagram(140)}
-            title="Fit diagram to viewport"
-            className="h-7 px-2.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
-          >
+          </ToolbarButton>
+          <ToolbarButton label="Fit to view" onClick={() => fitDiagram(140)}>
             Fit
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowLegend((v) => !v)}
-            title="Toggle legend"
-            className={`h-7 px-2.5 transition-colors ${
-              showLegend
-                ? 'bg-[var(--accent-bg)] text-[var(--accent)] font-medium'
-                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
-            }`}
-          >
+          </ToolbarButton>
+          <ToolbarButton label="Legend" onClick={() => setShowLegend((v) => !v)} active={showLegend}>
             Legend
-          </button>
+          </ToolbarButton>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ToolbarButton({
+  label,
+  onClick,
+  active = false,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      className={`h-8 min-w-8 px-2.5 transition-colors ${
+        active
+          ? 'bg-[var(--bg-subtle)] text-[var(--text-primary)] font-medium'
+          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function LegendSwatch({ label, bg, border }: { label: string; bg: string; border: string }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className="w-5 h-3 rounded-[3px] shrink-0 border" style={{ backgroundColor: bg, borderColor: border }} />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function LegendLine({ label, style }: { label: string; style: React.CSSProperties }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className="w-5 shrink-0 border-t" style={style} />
+      <span>{label}</span>
     </div>
   );
 }

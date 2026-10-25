@@ -1,7 +1,7 @@
 {
   "name": "composure",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Client-side Docker Compose visualizer, validator, and security hardening checker, with a CLI for CI",
   "type": "module",
   "bin": {

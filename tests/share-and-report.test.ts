@@ -84,7 +84,7 @@ describe('Markdown Security Report & Preset Examples', () => {
     const { svg, width, height } = await renderGraphToSvgString(graph, 'dark');
 
     expect(svg).toContain('<svg');
-    expect(svg).toContain('COMPOSURE ARCHITECTURE DIAGRAM');
+    expect(svg).toContain('Architecture diagram');
     expect(svg).toContain('proxy');
     expect(width).toBeGreaterThan(200);
     expect(height).toBeGreaterThan(200);

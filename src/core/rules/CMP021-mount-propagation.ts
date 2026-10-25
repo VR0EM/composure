@@ -20,6 +20,7 @@ export const CMP021: Rule = {
   id: 'CMP021',
   title: 'Shared mount propagation',
   severity: 'medium',
+  category: 'isolation',
   description:
     'With shared propagation, mounts made inside the container appear on the host (and vice versa), weakening mount isolation.',
   fix: buildFix('app', './data', '/data'),

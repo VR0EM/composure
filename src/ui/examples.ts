@@ -65,6 +65,7 @@ export const HARDENED_COMPOSE_YAML = `name: hardened-zero-trust-stack
 
 x-hardened: &hardened-defaults
   privileged: false
+  restart: unless-stopped
   read_only: true
   cap_drop:
     - ALL
@@ -170,6 +171,7 @@ export const MICROSERVICES_COMPOSE_YAML = `name: microservices-observability
 
 x-service-base: &service-base
   user: "1000:1000"
+  restart: unless-stopped
   read_only: true
   cap_drop:
     - ALL
@@ -280,33 +282,127 @@ volumes:
   mq_state:
 `;
 
+export const TRAEFIK_COMPOSE_YAML = `name: traefik-homelab
+
+# Shared hardening for every service
+x-defaults: &defaults
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  socket-proxy:
+    <<: *defaults
+    image: tecnativa/docker-socket-proxy:0.3.0
+    environment:
+      CONTAINERS: 1
+      POST: 0
+    volumes:
+      # composure-ignore CMP002 -- read-only API proxy, only reachable by Traefik
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    tmpfs:
+      - /run
+    networks:
+      - socket
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+          pids: 100
+
+  traefik:
+    <<: *defaults
+    image: traefik:v3.2.1
+    user: "65534:65534"
+    command:
+      - --providers.docker.endpoint=tcp://socket-proxy:2375
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --ping=true
+    ports:
+      - "80:80" # composure-ignore CMP004 -- public entry point
+    networks:
+      - socket
+      - web
+    depends_on:
+      - socket-proxy
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.50"
+          pids: 200
+
+  whoami:
+    <<: *defaults
+    image: traefik/whoami:v1.10.3
+    user: "65534:65534"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whoami.rule=Host(\`whoami.localhost\`)
+    networks:
+      - web
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.10"
+          pids: 50
+
+networks:
+  socket:
+    internal: true
+  web:
+`;
+
 export const COMPOSE_EXAMPLES: ComposeExample[] = [
   {
     id: 'production-stack',
-    label: 'Web Stack (Default)',
+    label: 'Web app',
     badge: 'Balanced',
-    description: 'Nginx reverse proxy, Node API, PostgreSQL, and Redis cache',
+    description: 'Nginx proxy, Node API, PostgreSQL and Redis',
     yaml: DEFAULT_COMPOSE_YAML,
   },
   {
     id: 'deliberately-insecure',
-    label: 'Insecure Stack (Demo)',
+    label: 'Insecure homelab',
     badge: 'Grade F',
-    description: 'Deliberately vulnerable compose file demonstrating critical hardening findings',
+    description: 'A deliberately risky stack that triggers most rules',
     yaml: INSECURE_COMPOSE_YAML,
   },
   {
+    id: 'traefik-homelab',
+    label: 'Traefik with socket proxy',
+    badge: 'Accepted risks',
+    description: 'Traefik behind a read-only Docker socket proxy, with accepted risks marked inline',
+    yaml: TRAEFIK_COMPOSE_YAML,
+  },
+  {
     id: 'hardened-reference',
-    label: 'Hardened Zero-Trust',
+    label: 'Hardened reference',
     badge: 'Grade A',
-    description: 'Digest-pinned, non-root, read-only rootfs, cap_drop: ALL, and internal networks',
+    description: 'Digest-pinned, non-root, read-only, no capabilities, internal networks',
     yaml: HARDENED_COMPOSE_YAML,
   },
   {
     id: 'microservices-anchors',
-    label: 'Microservices & Anchors',
+    label: 'Microservices',
     badge: 'YAML <<',
-    description: 'Multi-service architecture using YAML anchors, merge keys, and profiles',
+    description: 'Several services sharing settings through YAML anchors and profiles',
     yaml: MICROSERVICES_COMPOSE_YAML,
   },
 ];

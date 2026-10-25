@@ -21,6 +21,9 @@ const SENSITIVE_PORTS: Record<number, { label: string; severity: Severity }> = {
   9092: { label: 'Kafka', severity: 'high' },
   2181: { label: 'ZooKeeper', severity: 'high' },
   8500: { label: 'Consul', severity: 'high' },
+  22: { label: 'SSH', severity: 'high' },
+  3389: { label: 'RDP', severity: 'high' },
+  5900: { label: 'VNC', severity: 'high' },
 };
 
 function isBoundToAllInterfaces(hostIp?: string): boolean {
@@ -70,6 +73,7 @@ export const CMP004: Rule = {
   id: 'CMP004',
   title: 'Port bound to 0.0.0.0',
   severity: 'medium',
+  category: 'network',
   description:
     'Published ports listen on every interface, and Docker\'s iptables rules bypass host firewalls such as `ufw`.',
   fix: buildFix('app'),
@@ -94,6 +98,7 @@ export const CMP004: Rule = {
         const sensitive = matchSensitivePort(port.target) ?? matchSensitivePort(port.published);
         const autofix = {
           label: 'Bind to 127.0.0.1',
+          caution: 'The port is then only reachable from this host. Put a reverse proxy in front for outside access.',
           operations: [
             { kind: 'bindPortHostIp' as const, service: service.name, index, hostIp: '127.0.0.1' },
           ],
@@ -102,7 +107,7 @@ export const CMP004: Rule = {
         if (sensitive) {
           findings.push({
             ruleId: this.id,
-            title: sensitive.severity === 'critical' ? 'Docker API published' : 'DB port on 0.0.0.0',
+            title: sensitive.severity === 'critical' ? 'Docker API published' : 'Sensitive port on 0.0.0.0',
             severity: sensitive.severity,
             service: service.name,
             line: port.line,

@@ -24,6 +24,7 @@ export const CMP009: Rule = {
   id: 'CMP009',
   title: 'No no-new-privileges',
   severity: 'medium',
+  category: 'privileges',
   description:
     'Processes can gain extra privileges via setuid or setgid binaries.',
   fix: buildFix('app'),
@@ -48,6 +49,7 @@ export const CMP009: Rule = {
           references: this.references,
           autofix: {
             label: 'Add no-new-privileges:true',
+            caution: 'setuid tools such as sudo stop working inside the container.',
             operations: [
               {
                 kind: 'addListItem',

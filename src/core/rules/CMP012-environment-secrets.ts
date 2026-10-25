@@ -121,6 +121,7 @@ export const CMP012: Rule = {
   id: 'CMP012',
   title: 'Secret in environment',
   severity: 'high',
+  category: 'secrets',
   description:
     'Plaintext credentials in Compose files leak through git history and `docker inspect`.',
   fix: buildFix('db'),
@@ -157,6 +158,7 @@ export const CMP012: Rule = {
             ? {
                 autofix: {
                   label: `Use \${${entry.key}}`,
+                  caution: `Set ${entry.key} in your shell or in an untracked .env file next to the Compose file.`,
                   operations: [
                     {
                       kind: 'setEnvValue' as const,

@@ -24,6 +24,7 @@ export const CMP013: Rule = {
   id: 'CMP013',
   title: 'User not set',
   severity: 'info',
+  category: 'privileges',
   description:
     'Without a non-root UID, the container defaults to the image user (often `root`).',
   fix: buildFix('app'),

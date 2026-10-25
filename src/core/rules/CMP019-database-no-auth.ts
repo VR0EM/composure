@@ -67,6 +67,7 @@ export const CMP019: Rule = {
   id: 'CMP019',
   title: 'Database auth disabled',
   severity: 'high',
+  category: 'secrets',
   description:
     'Anyone who can reach the datastore over the network can read and change all of its data.',
   fix: buildFix('db'),
