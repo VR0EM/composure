@@ -250,13 +250,18 @@ textarea {
   background-clip: padding-box;
 }
 
-/* Diagram focus: dim everything not connected to the selected or hovered node */
+/* Diagram focus: fade what is not connected to the selected node, but keep it legible */
 .react-flow__node.is-dimmed {
-  opacity: 0.32;
+  opacity: 0.5;
 }
 
 .react-flow__edge.is-dimmed {
-  opacity: 0.15;
+  opacity: 0.14;
+}
+
+/* Hover only softens unrelated lines; nodes stay fully readable */
+.react-flow__edge.is-muted {
+  opacity: 0.3;
 }
 
 .react-flow__node,

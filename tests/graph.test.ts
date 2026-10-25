@@ -6,9 +6,10 @@ import {
   buildComposeGraph,
   getWorstSeverity,
   parseCompose,
+  portNodeTitle,
+  shortenHostPath,
   splitImageReference,
 } from '../src/core';
-import { formatBindMountShortPath } from '../src/ui/diagram/CustomNodes';
 
 function readFixture(name: string): string {
   return readFileSync(join(__dirname, 'fixtures', name), 'utf-8');
@@ -49,15 +50,21 @@ describe('splitImageReference', () => {
   });
 });
 
-describe('formatBindMountShortPath', () => {
-  it('returns last two path segments or full path if fewer than two segments', () => {
-    expect(formatBindMountShortPath('/var/run/docker.sock')).toBe(
-      'run/docker.sock',
-    );
-    expect(formatBindMountShortPath('/var/lib/docker')).toBe('lib/docker');
-    expect(formatBindMountShortPath('/etc')).toBe('/etc');
-    expect(formatBindMountShortPath('./nginx.conf')).toBe('./nginx.conf');
-    expect(formatBindMountShortPath('/')).toBe('/');
+describe('shortenHostPath', () => {
+  it('keeps normal paths whole so the location stays unambiguous', () => {
+    expect(shortenHostPath('/var/run/docker.sock')).toBe('/var/run/docker.sock');
+    expect(shortenHostPath('/etc')).toBe('/etc');
+    expect(shortenHostPath('./nginx.conf')).toBe('./nginx.conf');
+    expect(shortenHostPath('/')).toBe('/');
+  });
+
+  it('shortens long paths in the middle, keeping the root and the file name', () => {
+    const long = '/srv/data/applications/production/config/nginx/conf.d/site.conf';
+    const short = shortenHostPath(long);
+    expect(short.length).toBeLessThanOrEqual(34);
+    expect(short.startsWith('/srv/…/')).toBe(true);
+    expect(short.endsWith('/site.conf')).toBe(true);
+    expect(shortenHostPath('/a/' + 'x'.repeat(60)).length).toBe(34);
   });
 });
 
@@ -167,12 +174,47 @@ describe('buildComposeGraph', () => {
     if (webNode?.data.kind === 'service') {
       expect(webNode.data.worstSeverity).toBe('critical');
       expect(webNode.data.findingsCount).toBe(2);
-      expect(webNode.width).toBe(172 + 24 + 8);
-      expect(webNode.height).toBe(54 + 8 + 4);
-      expect(apiNode?.width).toBe(172);
-      expect(apiNode?.height).toBe(54);
-      expect(webNode.width).toBeGreaterThan(apiNode!.width);
-      expect(webNode.height).toBeGreaterThan(apiNode!.height);
+      // Size follows the text, not the number of findings
+      expect(webNode.height).toBe(apiNode?.height);
     }
+  });
+});
+
+describe('node sizing and edge details', () => {
+  it('sizes each column to its longest text so names are not cut off', () => {
+    const parsed = parseCompose(`services:
+  a:
+    image: ghcr.io/some-organisation/a-rather-long-image-name:1.2.3
+    ports: ["127.0.0.1:18080:80", "53:53/udp"]
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro", "data:/data"]
+  b:
+    image: nginx:1.27
+volumes:
+  data: {}
+`);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const graph = buildComposeGraph(parsed.model);
+    const [a, b] = graph.nodes.filter((n) => n.kind === 'service');
+    expect(a!.width).toBe(288); // long image: capped at the maximum width
+    expect(b!.width).toBe(168); // short name and image: minimum width
+    const sock = graph.nodes.find((n) => n.id === 'bind:/var/run/docker.sock');
+    expect(sock!.width).toBeGreaterThanOrEqual('/var/run/docker.sock'.length * 7.2 + 24);
+
+    const port = graph.nodes.find((n) => n.id === 'port:a:1');
+    expect(port?.data.kind === 'hostPort' && portNodeTitle(port.data)).toBe('0.0.0.0:53 → 53/udp');
+  });
+
+  it('explains every connection in plain language', () => {
+    const parsed = parseCompose(readFixture('short-syntax.yml'));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const graph = buildComposeGraph(parsed.model);
+    for (const edge of graph.edges) {
+      expect(edge.detail.title.length).toBeGreaterThan(0);
+      expect(edge.detail.text.length).toBeGreaterThan(0);
+    }
+    const bind = graph.edges.find((e) => e.target === 'bind:./html');
+    expect(bind?.detail.text).toContain('read-only');
   });
 });

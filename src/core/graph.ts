@@ -59,7 +59,10 @@ export interface HostPortNodeData extends Record<string, unknown> {
   kind: 'hostPort';
   serviceName: string;
   port: PortMapping;
+  /** Host side of the mapping, e.g. `0.0.0.0:8080`. */
   exposureLabel: string;
+  /** Container side, e.g. `80` or `53/udp`. */
+  containerLabel: string;
   isPublicInternet: boolean;
 }
 
@@ -88,6 +91,8 @@ export interface DiagramEdge {
   label?: string;
   dashed?: boolean;
   readOnly?: boolean;
+  /** Plain-language explanation shown when hovering the connection. */
+  detail: { title: string; text: string };
 }
 
 export interface ComposeGraph {
@@ -168,6 +173,11 @@ export function splitImageReference(
   };
 }
 
+/** `name:tag`, or `name@digest` for pinned images. */
+export function formatImageReference(ref: { imageName: string; imageTag: string }): string {
+  return ref.imageTag.startsWith('@') ? `${ref.imageName}${ref.imageTag}` : `${ref.imageName}:${ref.imageTag}`;
+}
+
 function isLoopbackIp(hostIp?: string): boolean {
   if (!hostIp) return false;
   // `${BIND_IP:-127.0.0.1}`: judge by the fallback value
@@ -180,6 +190,94 @@ function isLoopbackIp(hostIp?: string): boolean {
     trimmed === 'localhost'
   );
 }
+
+/*
+ * Node sizes. Text is estimated from the Geist metrics used in the UI so nodes
+ * are wide enough for their content.
+ */
+const MONO_12 = 7.25; // Geist Mono 12px: 0.6em per glyph, plus a little slack
+const SANS_13_SEMIBOLD = 7.6;
+const NODE_PADDING_X = 30; // 14px padding each side plus the border
+
+export const SERVICE_NODE = { minWidth: 168, maxWidth: 288, height: 58 } as const;
+export const PORT_NODE = { minWidth: 152, maxWidth: 260, height: 50 } as const;
+export const RESOURCE_NODE = { minWidth: 140, maxWidth: 280, height: 50 } as const;
+
+/** Longest host path shown in full; longer paths keep their start and end. */
+const MAX_PATH_CHARS = 34;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.ceil(value)));
+}
+
+/** Shorten long host paths in the middle so both the root and the file stay visible. */
+export function shortenHostPath(hostPath: string, maxChars = MAX_PATH_CHARS): string {
+  const path = hostPath.trim();
+  if (path.length <= maxChars) return path;
+  const segments = path.split('/');
+  const last = segments[segments.length - 1] ?? '';
+  const head = path.startsWith('/') ? `/${segments[1] ?? ''}` : segments[0] ?? '';
+  const candidate = `${head}/…/${last}`;
+  if (candidate.length <= maxChars) {
+    // Add parent folders back while they fit
+    let tail = last;
+    for (let i = segments.length - 2; i > 1; i--) {
+      const next = `${segments[i]}/${tail}`;
+      if (`${head}/…/${next}`.length > maxChars) break;
+      tail = next;
+    }
+    return `${head}/…/${tail}`;
+  }
+  return `…${path.slice(path.length - maxChars + 1)}`;
+}
+
+export function portContainerLabel(port: PortMapping): string {
+  return `${port.target}${port.protocol !== 'tcp' ? `/${port.protocol}` : ''}`;
+}
+
+export function portNodeTitle(data: Pick<HostPortNodeData, 'exposureLabel' | 'containerLabel'>): string {
+  return `${data.exposureLabel} → ${data.containerLabel}`;
+}
+
+function resourceTitle(data: DiagramNodeData): string {
+  switch (data.kind) {
+    case 'network':
+      return data.network.name;
+    case 'volume':
+      return data.volume.name.startsWith('anon:') ? data.volume.name.split(':').slice(2).join(':') : data.volume.name;
+    case 'bindMount':
+      return shortenHostPath(data.hostPath);
+    default:
+      return '';
+  }
+}
+
+/** Size every node to fit its own text (within limits). The layout can align a column afterwards. */
+function sizeNodes(nodes: DiagramNode[]): void {
+  for (const n of nodes) {
+    const data = n.data;
+    if (data.kind === 'service') {
+      const badge = data.findingsCount > 0 ? 34 : 0;
+      const name = data.service.name.length * SANS_13_SEMIBOLD + badge;
+      const image = formatImageReference(data).length * MONO_12;
+      n.width = clamp(Math.max(name, image) + NODE_PADDING_X, SERVICE_NODE.minWidth, SERVICE_NODE.maxWidth);
+      n.height = SERVICE_NODE.height;
+    } else if (data.kind === 'hostPort') {
+      n.width = clamp(portNodeTitle(data).length * MONO_12 + NODE_PADDING_X, PORT_NODE.minWidth, PORT_NODE.maxWidth);
+      n.height = PORT_NODE.height;
+    } else {
+      const perChar = data.kind === 'bindMount' ? MONO_12 : SANS_13_SEMIBOLD;
+      n.width = clamp(resourceTitle(data).length * perChar + NODE_PADDING_X, RESOURCE_NODE.minWidth, RESOURCE_NODE.maxWidth);
+      n.height = RESOURCE_NODE.height;
+    }
+  }
+}
+
+const DEPENDS_CONDITION_TEXT: Record<string, string> = {
+  service_healthy: 'Waits until it reports healthy.',
+  service_completed_successfully: 'Waits until it has run to completion.',
+  service_started: 'Waits until it has started.',
+};
 
 /**
  * Build a pure logical graph of nodes and edges from a normalized ComposeModel
@@ -227,29 +325,12 @@ export function buildComposeGraph(
     );
 
     const worstSeverity = getWorstSeverity(svcFindings);
-    const sevBonus: Record<Severity | 'none', { w: number; h: number }> = {
-      critical: { w: 24, h: 8 },
-      high: { w: 16, h: 6 },
-      medium: { w: 10, h: 4 },
-      low: { w: 4, h: 2 },
-      info: { w: 0, h: 0 },
-      none: { w: 0, h: 0 },
-    };
-    const bonus = sevBonus[worstSeverity];
-    const svcWidth = Math.min(
-      236,
-      172 + bonus.w + Math.min(svcFindings.length * 4, 20),
-    );
-    const svcHeight = Math.min(
-      78,
-      54 + bonus.h + Math.min(svcFindings.length * 2, 8),
-    );
 
     nodes.push({
       id: serviceNodeId,
       kind: 'service',
-      width: svcWidth,
-      height: svcHeight,
+      width: SERVICE_NODE.minWidth,
+      height: SERVICE_NODE.height,
       data: {
         kind: 'service',
         service,
@@ -267,19 +348,22 @@ export function buildComposeGraph(
       const isLoopback = isLoopbackIp(port.hostIp);
       const isPublicInternet = !isLoopback;
       const hostBind = port.hostIp ? `${port.hostIp}:` : '0.0.0.0:';
-      const pubPort = port.published ?? 'ephemeral';
+      const pubPort = port.published ?? 'random';
       const protoSuffix = port.protocol !== 'tcp' ? `/${port.protocol}` : '';
+      const exposureLabel = `${hostBind}${pubPort}`;
+      const containerLabel = portContainerLabel(port);
 
       nodes.push({
         id: portNodeId,
         kind: 'hostPort',
-        width: 164,
-        height: 48,
+        width: PORT_NODE.minWidth,
+        height: PORT_NODE.height,
         data: {
           kind: 'hostPort',
           serviceName: service.name,
           port,
-          exposureLabel: `${hostBind}${pubPort}${protoSuffix}`,
+          exposureLabel,
+          containerLabel,
           isPublicInternet,
         },
       });
@@ -290,6 +374,12 @@ export function buildComposeGraph(
         target: serviceNodeId,
         kind: 'port',
         label: `:${port.target}${protoSuffix}`,
+        detail: {
+          title: `${exposureLabel} → ${service.name}:${containerLabel}`,
+          text: isPublicInternet
+            ? 'Published on every network interface of the host.'
+            : 'Only reachable from the host itself.',
+        },
       });
     });
 
@@ -310,6 +400,12 @@ export function buildComposeGraph(
         target: `network:${net.name}`,
         kind: 'network',
         ...(net.ipv4Address ? { label: net.ipv4Address } : {}),
+        detail: {
+          title: `${service.name} → ${net.name}`,
+          text: net.ipv4Address
+            ? `Attached to the network with fixed address ${net.ipv4Address}.`
+            : 'Attached to the network; reachable by service name from other members.',
+        },
       });
     }
 
@@ -337,6 +433,10 @@ export function buildComposeGraph(
           kind: 'volume',
           label: rwLabel,
           readOnly: mount.readOnly,
+          detail: {
+            title: `${service.name} → ${mount.source}`,
+            text: `Host folder mounted at ${mount.target}, ${mount.readOnly ? 'read-only' : 'read-write'}.`,
+          },
         });
       } else if (mount.type === 'volume') {
         const volName = mount.source ?? `anon:${service.name}:${mount.target}`;
@@ -356,6 +456,10 @@ export function buildComposeGraph(
           kind: 'volume',
           label: rwLabel,
           readOnly: mount.readOnly,
+          detail: {
+            title: `${service.name} → ${mount.source ?? 'anonymous volume'}`,
+            text: `Volume mounted at ${mount.target}, ${mount.readOnly ? 'read-only' : 'read-write'}.`,
+          },
         });
       }
     });
@@ -372,6 +476,10 @@ export function buildComposeGraph(
         kind: 'networkMode',
         label: 'shares network',
         dashed: true,
+        detail: {
+          title: `${service.name} → ${sharedNetworkTarget}`,
+          text: `Uses the network stack of ${sharedNetworkTarget} (network_mode: service).`,
+        },
       });
     }
 
@@ -388,6 +496,10 @@ export function buildComposeGraph(
               ? `depends_on (${dep.condition})`
               : 'depends_on',
           dashed: true,
+          detail: {
+            title: `${service.name} depends on ${dep.target}`,
+            text: DEPENDS_CONDITION_TEXT[dep.condition ?? 'service_started'] ?? `Condition: ${dep.condition}.`,
+          },
         });
       }
     }
@@ -399,8 +511,8 @@ export function buildComposeGraph(
     nodes.push({
       id: `network:${network.name}`,
       kind: 'network',
-      width: 136,
-      height: 48,
+      width: RESOURCE_NODE.minWidth,
+      height: RESOURCE_NODE.height,
       data: {
         kind: 'network',
         network,
@@ -425,8 +537,8 @@ export function buildComposeGraph(
     nodes.push({
       id: `volume:${volName}`,
       kind: 'volume',
-      width: 144,
-      height: 48,
+      width: RESOURCE_NODE.minWidth,
+      height: RESOURCE_NODE.height,
       data: {
         kind: 'volume',
         volume: declaredVol,
@@ -437,24 +549,11 @@ export function buildComposeGraph(
 
   // 4. Bind Mount nodes
   for (const [hostPath, info] of bindMountsMap.entries()) {
-    const segments = hostPath
-      .trim()
-      .split('/')
-      .filter((s) => s.length > 0 && s !== '.');
-    const shortLabel =
-      segments.length >= 2
-        ? `${segments[segments.length - 2]}/${segments[segments.length - 1]}`
-        : hostPath.trim() || hostPath;
-    const bindWidth = Math.min(
-      184,
-      Math.max(136, Math.round(52 + shortLabel.length * 7.5)),
-    );
-
     nodes.push({
       id: `bind:${hostPath}`,
       kind: 'bindMount',
-      width: bindWidth,
-      height: 48,
+      width: RESOURCE_NODE.minWidth,
+      height: RESOURCE_NODE.height,
       data: {
         kind: 'bindMount',
         hostPath,
@@ -464,5 +563,6 @@ export function buildComposeGraph(
     });
   }
 
+  sizeNodes(nodes);
   return { nodes, edges };
 }
